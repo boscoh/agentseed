@@ -33,9 +33,10 @@ uv run minagent check             # which providers are live?
 
 ## Frontend
 
-The chat UI is a single file, `minagent/index.html` (adapted from
-chatboti), served by FastAPI at `/`. It loads Vue 3, Bootstrap, marked and pug
-from CDNs, so there is no build step: edit the file and reload the page.
+The chat UI is a single file, `minagent/index.html`, based on the one-page app
+template from [onepageapp](https://github.com/boscoh/onepageapp). FastAPI serves
+it at `/`. It loads Vue 3, Bootstrap, marked and pug from CDNs, so there is no
+build step: edit the file and reload the page.
 
 It keeps the conversation in `localStorage` as Pydantic AI `ModelMessage` JSON,
 and has a provider/model dropdown fed by `/config`. Providers that failed the
