@@ -1,0 +1,585 @@
+<head>
+  <!-- avoid text rendering issues on various platforms -->
+  <meta charset="utf-8" />
+  <title>minagent</title>
+
+  <!-- prevent auto-zooming on mobile browsers -->
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Bootstrap -->
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.1/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+  />
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.1/dist/js/bootstrap.bundle.min.js"></script>
+
+  <!-- Font Awesome -->
+  <link
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.1/css/all.min.css"
+    rel="stylesheet"
+  />
+
+  <!-- Markdown renderer -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/atom-one-light.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/highlight.min.js"></script>
+
+  <!-- Pug template compiler -->
+  <script src="https://pugjs.org/js/pug.js"></script>
+  <script>
+    window.pug = require("pug");
+
+    function renderHtmlFromPug(str) {
+      const lines = str.replace(/^\n/, "").split("\n");
+      const minIndent = Math.min(
+        ...lines.filter((l) => l.trim()).map((l) => l.match(/^\s*/)[0].length),
+      );
+      return pug.render(lines.map((l) => l.slice(minIndent)).join("\n"));
+    }
+
+    function renderMarkdown(text) {
+      // Handle empty content (e.g., assistant messages with tool calls)
+      if (!text) {
+        return '<em class="text-muted">(processing...)</em>';
+      }
+      const html = marked.parse(text);
+      return html;
+    }
+  </script>
+
+  <!-- Vue 3 -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+
+  <!-- Styles -->
+  <style>
+    /* Allow long text to wrap and scroll */
+    pre {
+      white-space: pre-wrap; /* Preserve whitespace but allow wrapping */
+      word-wrap: break-word; /* Break long words to fit container */
+      overflow-x: auto; /* Adds horizontal scroll if needed */
+    }
+
+    /* Smooth scrolling for all scrollable elements */
+    html {
+      scroll-behavior: smooth;
+    }
+
+    /* Smooth scrolling for the chat container */
+    .flex-grow-1.overflow-auto {
+      scroll-behavior: smooth;
+      transition: scroll-behavior 0.3s ease-in-out;
+    }
+
+    .messages-container {
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      min-height: 100%;
+    }
+
+    /* Message entry animation */
+    .message {
+      opacity: 0;
+      animation: fadeIn 0.3s ease-out forwards;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* Add staggered delay for messages */
+    .message {
+      animation-delay: 0.1s;
+    }
+    @keyframes fadeInOut {
+      0%,
+      100% {
+        opacity: 0.2;
+      }
+      50% {
+        opacity: 1;
+      }
+    }
+    .thinking-dots span {
+      animation: fadeInOut 1.5s infinite ease-in-out;
+      opacity: 0.2;
+    }
+    .thinking-dots span:nth-child(2) {
+      animation-delay: 0.3s;
+    }
+    .thinking-dots span:nth-child(3) {
+      animation-delay: 0.6s;
+    }
+
+    #main-column {
+      max-width: 650px;
+      margin: 0 auto;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+    }
+
+    body {
+      background-color: #ffffff;
+      font-family:
+        -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+        Arial, sans-serif;
+    }
+
+    .message .card {
+      border: none;
+      border-radius: 18px;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+      max-width: 85%;
+      word-wrap: break-word;
+    }
+
+    .message .card-body {
+      padding: 12px 16px;
+    }
+
+    .message .card-text {
+      font-size: 15px;
+      line-height: 1.5;
+      margin: 0;
+    }
+
+    .message .card-text > *:first-child {
+      margin-top: 0 !important;
+    }
+
+    .message .card-text > *:last-child {
+      margin-bottom: 0 !important;
+    }
+
+    .message .card-text p {
+      margin-top: 0;
+      margin-bottom: 1em;
+    }
+
+    .message .card.bg-info {
+      background-color: #007aff !important;
+      color: white;
+      margin-left: auto;
+    }
+
+    .message .card.bg-light {
+      background-color: #ffffff !important;
+      color: #1d1d1f;
+      margin-right: auto;
+      border: 1px solid #e5e5e7;
+    }
+
+    .message .card.border-danger {
+      background-color: #ff3b30 !important;
+      color: white;
+      border: none !important;
+    }
+
+    .message.mb-3 {
+      margin-bottom: 12px;
+    }
+
+    .messages-area {
+      flex: 1;
+      overflow-y: auto;
+      background-color: #ffffff;
+      padding: 20px 16px;
+    }
+
+    .form-control {
+      border-radius: 12px;
+      border: 1px solid #e5e5e7;
+      padding: 12px 16px;
+      font-size: 15px;
+      resize: none;
+      transition:
+        border-color 0.2s,
+        box-shadow 0.2s;
+    }
+
+    .form-control:focus {
+      border-color: #007aff;
+      box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
+      outline: none;
+    }
+
+    .form-control:disabled {
+      background-color: #f5f5f5;
+      opacity: 0.6;
+    }
+
+    button.btn {
+      border-radius: 12px;
+      padding: 10px 24px;
+      font-size: 15px;
+      font-weight: 500;
+      border: none;
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+
+    button.btn.btn-info {
+      background-color: #007aff;
+      color: white;
+    }
+
+    button.btn.btn-info:hover:not(:disabled) {
+      background-color: #0051d5;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
+    }
+
+    button.btn.btn-info:active:not(:disabled) {
+      transform: translateY(0);
+      box-shadow: 0 1px 4px rgba(0, 122, 255, 0.2);
+    }
+
+    button.btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .input-container {
+      flex-shrink: 0;
+      background-color: #fafafa;
+      border-top: 1px solid #e5e5e7;
+      padding: 16px 0;
+    }
+
+    .header-section {
+      flex-shrink: 0;
+      background-color: #fafafa;
+      border-bottom: 1px solid #e5e5e7;
+      padding: 12px 16px;
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 700;
+      color: #1d1d1f;
+      margin: 0 0 4px 0;
+    }
+
+    .header-section p {
+      margin: 0;
+      font-size: 13px;
+    }
+    .model-select {
+      max-width: 100%;
+      margin: 6px auto 0;
+      font-size: 13px;
+      border-radius: 8px;
+      padding: 4px 8px;
+    }
+
+    .message .card.tool-card {
+      background-color: #f5f5f7 !important;
+      color: #6e6e73;
+      margin-right: auto;
+      max-width: 100%;
+      box-shadow: none;
+      border: 1px dashed #d2d2d7;
+    }
+
+    .message .card.tool-card .card-text {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+    }
+  </style>
+
+  <!-- Ky -->
+  <script type="module">
+    import ky from "https://unpkg.com/ky/distribution/index.js";
+    window.ky = ky;
+  </script>
+</head>
+
+<body>
+  <div id="app"></div>
+</body>
+
+<script>
+  // Chat UI for minagent. Adapted from chatboti's index.html.
+  //
+  // API (see minagent/server.py):
+  //   GET  /config      -> default provider/model plus every selectable pair,
+  //                        each tagged live: true | false | null (probe pending)
+  //   POST /agent/chat  -> body and response are Pydantic AI ModelMessage arrays;
+  //                        ?service=&model= picks the provider/model pair.
+
+  // language=pug
+  let template = renderHtmlFromPug(`
+    .d-flex.flex-column(style="height: 100vh;")
+      .header-section.text-center
+        h1 {{ title }}
+        p.text-muted.mb-0(v-if="subtitle") {{ subtitle }}
+        select.form-select.form-select-sm.model-select(
+          v-if="config && config.models.length"
+          v-model="selected"
+          :disabled="isLoading"
+        )
+          option(
+            v-for="o in config.models"
+            :key="optionKey(o)"
+            :value="optionKey(o)"
+            :disabled="o.live === false"
+            :title="o.error || ''"
+          ) {{ optionLabel(o) }}
+      #main-column.d-flex.flex-column.flex-grow-1(ref="mainColumn")
+        .messages-area
+          .px-3
+            .messages-container
+              .message.mb-3(v-for="(msg, index) in display" :key="index" :class="'message-' + index")
+                .card(:class="getMessageClass(msg.role)")
+                  .card-body
+                    .card-text(v-if="msg.role === 'assistant'" v-html="renderMarkdown(msg.content)")
+                    .card-text(v-else) {{ msg.content }}
+              .message.mb-3(v-if="isLoading")
+                  .card.bg-light
+                    .card-body
+                      pre.card-text.text-muted
+                        span.thinking-dots
+                          span .
+                          span .
+                          span .
+      .input-container.position-relative
+         .mx-auto(style="max-width: 650px; width: 100%; padding: 0 16px;")
+           .mb-2
+             textarea.form-control(v-model="userInput" @keyup.enter.exact.prevent="sendMessage" :disabled="isLoading" placeholder="Type your message here..." rows="3")
+           .d-flex.justify-content-between
+             button.btn.btn-outline-secondary(@click="confirmClearChat" :disabled="isLoading") Clear
+             button.btn.btn-info(@click="sendMessage" :disabled="isLoading || !userInput.trim()")
+               span(v-if="!isLoading") Send
+               span(v-if="isLoading") Sending...
+  `);
+
+  const { createApp, ref, onMounted, nextTick, computed, watch } = Vue;
+
+  const HISTORY_KEY = "minagentHistory";
+  const SELECTED_KEY = "minagentModel";
+  // The server probes providers in the background at startup, so re-check
+  // /config until every provider has a result (or give up after ~1 minute).
+  const POLL_MS = 2000;
+  const MAX_POLLS = 30;
+
+  /** Coerce a ModelMessage part's content (string | parts | anything) to text. */
+  function asText(content) {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      return content
+        .map((c) => (typeof c === "string" ? c : typeof c?.content === "string" ? c.content : ""))
+        .join("");
+    }
+    return content == null ? "" : JSON.stringify(content);
+  }
+
+  /** Flatten Pydantic AI ModelMessages into user/assistant/tool bubbles. */
+  function toDisplay(history) {
+    const out = [];
+    for (const message of history) {
+      for (const part of message.parts || []) {
+        if (part.part_kind === "user-prompt") {
+          out.push({ role: "user", content: asText(part.content) });
+        } else if (part.part_kind === "text") {
+          out.push({ role: "assistant", content: asText(part.content) });
+        } else if (part.part_kind === "tool-call") {
+          out.push({ role: "tool", content: `→ ${part.tool_name}(${asText(part.args)})` });
+        } else if (part.part_kind === "tool-return") {
+          out.push({ role: "tool", content: `← ${part.tool_name}: ${asText(part.content)}` });
+        }
+      }
+    }
+    return out;
+  }
+
+  const optionKey = (o) => `${o.service}:${o.model}`;
+
+  /** Dropdown label, marking providers that are down or still being probed. */
+  function optionLabel(o) {
+    const label = `${o.service} / ${o.model}`;
+    if (o.live === false) return `${label} (unavailable)`;
+    if (o.live === null) return `${label} (checking...)`;
+    return label;
+  }
+
+  /** POST the full history; resolves to the updated history or throws. */
+  async function postChat(history, option) {
+    const params = option ? `?${new URLSearchParams({ service: option.service, model: option.model })}` : "";
+    try {
+      return await ky
+        .post(`/agent/chat${params}`, { json: history, timeout: 5 * 60000 }) // 5 minutes
+        .json();
+    } catch (error) {
+      // ky throws HTTPError for non-2xx; surface FastAPI's {"detail": ...}.
+      const body = await error.response?.json().catch(() => null);
+      throw new Error(body?.detail || error.message || "Failed to send chat message");
+    }
+  }
+
+  function setup() {
+    const history = ref([]); // Pydantic AI ModelMessage[]
+    const errors = ref([]); // {afterIndex, content}: errors shown after a display index
+    const userInput = ref("");
+    const isLoading = ref(false);
+    const mainColumn = ref(null);
+    const config = ref(null);
+    const selected = ref(localStorage.getItem(SELECTED_KEY) || "");
+
+    const title = ref("minagent");
+    const subtitle = computed(() => {
+      if (!config.value) return "connecting...";
+      const option = config.value.models.find((o) => optionKey(o) === selected.value);
+      if (option?.live === false) return `unavailable: ${option.error}`;
+      return option ? `chat:${option.service}:${option.model}` : "";
+    });
+
+    // Interleave error bubbles into the rendered conversation.
+    const display = computed(() => {
+      const turns = toDisplay(history.value);
+      const out = [];
+      turns.forEach((t, i) => {
+        out.push(t);
+        for (const e of errors.value) if (e.afterIndex === i) out.push({ role: "error", content: e.content });
+      });
+      for (const e of errors.value) if (e.afterIndex >= turns.length || e.afterIndex < 0) out.push({ role: "error", content: e.content });
+      return out;
+    });
+
+    const scrollToBottom = () => {
+      nextTick(() => {
+        const container = document.querySelector(".messages-area");
+        if (container) {
+          container.scrollTop = container.scrollHeight;
+        }
+      });
+    };
+
+    watch(() => [display.value, isLoading.value], scrollToBottom, { deep: true });
+
+    const loadChatHistory = () => {
+      try {
+        history.value = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      } catch (e) {
+        console.error("Error loading chat history:", e);
+        history.value = [];
+      }
+    };
+
+    watch(() => history.value, () => localStorage.setItem(HISTORY_KEY, JSON.stringify(history.value)), { deep: true });
+    watch(selected, (value) => localStorage.setItem(SELECTED_KEY, value));
+
+    /** Keep the selection usable: current if not dead, else server default, else first live. */
+    const fixSelection = (data) => {
+      const models = data.models || [];
+      const current = models.find((o) => optionKey(o) === selected.value);
+      if (current && current.live !== false) return;
+      const fallback =
+        models.find((o) => o.service === data.service && o.model === data.model && o.live !== false) ||
+        models.find((o) => o.live === true) ||
+        models.find((o) => o.live !== false);
+      if (fallback) selected.value = optionKey(fallback);
+    };
+
+    const fetchConfig = async (polls = 0) => {
+      try {
+        const data = await ky.get("/config").json();
+        config.value = data;
+        fixSelection(data);
+        if (data.models.some((o) => o.live === null) && polls < MAX_POLLS) {
+          setTimeout(() => fetchConfig(polls + 1), POLL_MS);
+        }
+      } catch (e) {
+        console.error("Error fetching config:", e);
+      }
+    };
+
+    onMounted(() => {
+      loadChatHistory();
+      fetchConfig();
+      scrollToBottom();
+    });
+
+    async function sendMessage() {
+      const text = userInput.value.trim();
+      if (!text || isLoading.value) return;
+
+      const userMessage = {
+        kind: "request",
+        parts: [{ part_kind: "user-prompt", content: text, timestamp: new Date().toISOString() }],
+      };
+      const previous = history.value;
+      history.value = [...previous, userMessage];
+      userInput.value = "";
+      errors.value = [];
+      isLoading.value = true;
+
+      try {
+        const option = config.value?.models.find((o) => optionKey(o) === selected.value);
+        history.value = await postChat(history.value, option);
+      } catch (error) {
+        console.error("Error:", error);
+        // Drop the failed turn so it is not resent, and restore the input.
+        history.value = previous;
+        userInput.value = text;
+        errors.value = [{ afterIndex: -1, content: `Error: ${error.message}` }];
+      } finally {
+        isLoading.value = false;
+      }
+    }
+
+    const getMessageClass = (role) => {
+      return {
+        "ms-auto bg-info text-white": role === "user",
+        "me-auto bg-light": role === "assistant",
+        "tool-card": role === "tool",
+        "border-danger": role === "error",
+      };
+    };
+
+    const confirmClearChat = () => {
+      history.value = [];
+      errors.value = [];
+      userInput.value = "";
+      localStorage.removeItem(HISTORY_KEY);
+    };
+
+    return {
+      display,
+      userInput,
+      isLoading,
+      sendMessage,
+      getMessageClass,
+      mainColumn,
+      title,
+      subtitle,
+      config,
+      selected,
+      optionKey,
+      optionLabel,
+      confirmClearChat,
+      renderMarkdown,
+    };
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    createApp({ template, setup }).mount("#app");
+  });
+</script>
