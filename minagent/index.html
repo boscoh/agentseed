@@ -338,7 +338,6 @@
     #app-shell.d-flex.flex-column
       .header-section.text-center
         h1 {{ title }}
-        p.text-muted.mb-0(v-if="subtitle") {{ subtitle }}
         select.form-select.form-select-sm.model-select(
           v-if="config && config.models.length"
           v-model="selected"
@@ -452,13 +451,6 @@
     const selected = ref(localStorage.getItem(SELECTED_KEY) || "");
 
     const title = ref("minagent");
-    const subtitle = computed(() => {
-      if (!config.value) return "connecting...";
-      const option = config.value.models.find((o) => optionKey(o) === selected.value);
-      if (option?.live === false) return `unavailable: ${option.error}`;
-      return option ? `chat:${option.service}:${option.model}` : "";
-    });
-
     // Interleave error bubbles into the rendered conversation.
     const display = computed(() => {
       const turns = toDisplay(history.value);
@@ -577,7 +569,6 @@
       getMessageClass,
       mainColumn,
       title,
-      subtitle,
       config,
       selected,
       optionKey,
