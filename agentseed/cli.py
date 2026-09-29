@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI for the minagent server."""
+"""CLI for the agentseed server."""
 
 import threading
 from pathlib import Path
@@ -9,11 +9,11 @@ import cyclopts
 from cyclopts import Parameter
 from dotenv import load_dotenv
 
-from minagent.logger import setup_logging
+from agentseed.logger import setup_logging
 
 load_dotenv()
 
-app = cyclopts.App(help="minagent: minimal agent server with pluggable LLM providers.")
+app = cyclopts.App(help="agentseed: minimal agent server with pluggable LLM providers.")
 
 
 @app.default
@@ -26,7 +26,7 @@ def serve(
     ssl_cert: str = "cert.pem",
     ssl_key: str = "key.pem",
 ):
-    """Run the minagent server (default command).
+    """Run the agentseed server (default command).
 
     :param host: Bind host address
     :param port: Bind port number
@@ -38,7 +38,7 @@ def serve(
     """
     import uvicorn
 
-    from minagent.server import create_app, wait_and_open_browser
+    from agentseed.server import create_app, wait_and_open_browser
 
     setup_logging()
 
@@ -70,7 +70,7 @@ def serve(
 
     if reload:
         uvicorn.run(
-            "minagent.server:app",
+            "agentseed.server:app",
             host=host,
             port=port,
             log_config=None,
@@ -107,7 +107,7 @@ def check(
     from rich.console import Console
     from rich.table import Table
 
-    from minagent.providers import check_models
+    from agentseed.providers import check_models
 
     setup_logging(logging.WARNING)
     console = Console()

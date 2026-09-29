@@ -25,8 +25,8 @@ from pydantic import ValidationError
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessagesTypeAdapter, sanitize_messages
 
-from minagent.logger import setup_logging
-from minagent.providers import (
+from agentseed.logger import setup_logging
+from agentseed.providers import (
     CHAT_SERVICE,
     build_model,
     chat_model_options,
@@ -177,7 +177,7 @@ def create_app() -> FastAPI:
     :return: Configured FastAPI app
     """
     app = FastAPI(
-        title="minagent",
+        title="agentseed",
         description="Minimal agent server backed by Pydantic AI",
         version="0.1.0",
         lifespan=lifespan,
@@ -186,7 +186,7 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, str]:
         """Return a simple liveness response."""
-        return {"service": "minagent", "status": "ok"}
+        return {"service": "agentseed", "status": "ok"}
 
     @app.post("/agent/chat")
     async def agent_chat(request: Request, agent: AGENT) -> Response:
@@ -283,7 +283,7 @@ def create_app() -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     async def index() -> FileResponse:
-        """Serve the single-file chat UI (``minagent/index.html``)."""
+        """Serve the single-file chat UI (``agentseed/index.html``)."""
         return FileResponse(INDEX_HTML, media_type="text/html")
 
     return app

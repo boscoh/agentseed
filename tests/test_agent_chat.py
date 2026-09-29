@@ -10,7 +10,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 
-import minagent.server as server
+import agentseed.server as server
 
 
 def _user_history(text: str) -> bytes:
@@ -62,7 +62,7 @@ async def test_root_and_health():
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as ac:
         res = await ac.get("/health")
         assert res.status_code == 200
-        assert res.json() == {"service": "minagent", "status": "ok"}
+        assert res.json() == {"service": "agentseed", "status": "ok"}
 
 
 async def test_config_lists_model_options():
@@ -103,7 +103,7 @@ async def test_agent_chat_uses_selected_model():
 def test_build_anthropic_model(monkeypatch):
     from pydantic_ai.models.anthropic import AnthropicModel
 
-    from minagent.providers import build_model
+    from agentseed.providers import build_model
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     model = build_model("anthropic", "claude-sonnet-4-5")
@@ -114,7 +114,7 @@ def test_build_anthropic_model(monkeypatch):
 def test_build_anthropic_model_requires_key(monkeypatch):
     import pytest
 
-    from minagent.providers import build_model
+    from agentseed.providers import build_model
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):

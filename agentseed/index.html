@@ -1,7 +1,7 @@
 <head>
   <!-- avoid text rendering issues on various platforms -->
   <meta charset="utf-8" />
-  <title>minagent</title>
+  <title>agentseed</title>
 
   <!-- prevent auto-zooming on mobile browsers -->
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -325,9 +325,9 @@
 </body>
 
 <script>
-  // Chat UI for minagent. Based on onepageapp (https://github.com/boscoh/onepageapp).
+  // Chat UI for agentseed. Based on onepageapp (https://github.com/boscoh/onepageapp).
   //
-  // API (see minagent/server.py):
+  // API (see agentseed/server.py):
   //   GET  /config      -> default provider/model plus every selectable pair,
   //                        each tagged live: true | false | null (probe pending)
   //   POST /agent/chat  -> body and response are Pydantic AI ModelMessage arrays;
@@ -380,8 +380,8 @@
 
   const { createApp, ref, onMounted, nextTick, computed, watch } = Vue;
 
-  const HISTORY_KEY = "minagentHistory";
-  const SELECTED_KEY = "minagentModel";
+  const HISTORY_KEY = "agentseedHistory";
+  const SELECTED_KEY = "agentseedModel";
   // The server probes providers in the background at startup, so re-check
   // /config until every provider has a result (or give up after ~1 minute).
   const POLL_MS = 2000;
@@ -450,7 +450,7 @@
     const config = ref(null);
     const selected = ref(localStorage.getItem(SELECTED_KEY) || "");
 
-    const title = ref("minagent");
+    const title = ref("agentseed");
     // Interleave error bubbles into the rendered conversation.
     const display = computed(() => {
       const turns = toDisplay(history.value);

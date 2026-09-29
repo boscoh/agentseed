@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "minagent"
+name = "agentseed"
 version = "0.1.0"
 description = "Minimal pluggable LLM agent server (FastAPI + Pydantic AI)"
 requires-python = ">=3.11"
@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.scripts]
-minagent = "minagent.cli:main"
+agentseed = "agentseed.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["minagent"]
+packages = ["agentseed"]
