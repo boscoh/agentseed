@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "agentseed"
 version = "0.1.0"
 description = "Minimal pluggable LLM agent server (FastAPI + Pydantic AI)"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.116.0",
@@ -16,6 +17,13 @@ dependencies = [
     "pydantic-ai-slim[anthropic,openai,bedrock,groq]>=2.43.0",
     "boto3>=1.42.63",
     "rich>=13.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/boscoh/agentseed"
+
+[dependency-groups]
+dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
 ]
