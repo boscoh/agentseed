@@ -21,7 +21,7 @@ def serve(
     host: str = "127.0.0.1",
     port: int = 8000,
     reload: Annotated[bool, Parameter(name=["--reload", "-r"])] = True,
-    open_browser: Annotated[bool, Parameter(name=["--open-browser", "-o"])] = False,
+    open_browser: Annotated[bool, Parameter(name=["--open-browser", "-o"])] = True,
     ssl: Annotated[bool, Parameter(name=["--ssl", "-s"])] = False,
     ssl_cert: str = "cert.pem",
     ssl_key: str = "key.pem",
