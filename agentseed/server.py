@@ -1,10 +1,9 @@
 """FastAPI server for the agent.
 
-Routes: ``/`` serves the chat UI (``index.html``), ``/health`` is a
-liveness check, ``/config`` reports the selected provider/model, and
-``POST /agent/chat`` is the chat endpoint. Chat speaks Pydantic AI natively:
-request and response bodies are ``ModelMessage`` JSON arrays. There is no
-flat-dict translation layer.
+Routes: ``/`` serves the chat UI (``index.html``), ``/config`` reports the
+selected provider/model, and ``POST /agent/chat`` is the chat endpoint. Chat
+speaks Pydantic AI natively: request and response bodies are ``ModelMessage``
+JSON arrays. There is no flat-dict translation layer.
 """
 
 import asyncio
@@ -182,11 +181,6 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
-
-    @app.get("/health")
-    async def health() -> dict[str, str]:
-        """Return a simple liveness response."""
-        return {"service": "agentseed", "status": "ok"}
 
     @app.post("/agent/chat")
     async def agent_chat(request: Request, agent: AGENT) -> Response:

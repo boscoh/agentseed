@@ -56,15 +56,6 @@ async def test_agent_chat_rejects_invalid_json():
     assert res.status_code == 400
 
 
-async def test_root_and_health():
-    app = _test_app()
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://t") as ac:
-        res = await ac.get("/health")
-        assert res.status_code == 200
-        assert res.json() == {"service": "agentseed", "status": "ok"}
-
-
 async def test_config_lists_model_options():
     app = _test_app()
     transport = httpx.ASGITransport(app=app)

@@ -36,7 +36,6 @@ uv run agentseed check             # which providers are live?
 ## Endpoints
 
 - `GET /` — chat UI (`agentseed/index.html`)
-- `GET /health` — liveness
 - `GET /config` — default provider/model, availability, and all selectable `models` pairs
 - `POST /agent/chat[?service=&model=]` — native Pydantic AI message history (ModelMessage JSON arrays); optional query params pick a pair from `models.json`
 
@@ -86,7 +85,7 @@ startup probe are shown disabled, with the error on hover.
 
 - `agentseed/providers.py` — Pydantic AI model/embedding builders, `CHAT_SERVICE`
   selection (default `bedrock`), and `get_aws_config`
-- `agentseed/server.py` — FastAPI app (`/`, `/health`, `/config`, `/agent/chat`)
+- `agentseed/server.py` — FastAPI app (`/`, `/config`, `/agent/chat`)
   and the Pydantic AI agent builder
 - `agentseed/cli.py` — `agentseed` (serve, default) and `agentseed check` (cyclopts + uvicorn)
 - `agentseed/logger.py` — Rich logging setup

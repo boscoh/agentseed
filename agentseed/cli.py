@@ -60,10 +60,10 @@ def serve(
         # Always use localhost for browser opening, regardless of bind host
         browser_host = "localhost" if host in ("0.0.0.0", "127.0.0.1", "localhost") else host
         base_url = f"{protocol}://{browser_host}:{port}"
-        # Poll the always-present health endpoint, then open the UI root.
+        # Poll the UI root until the server answers, then open it.
         thread = threading.Thread(
             target=wait_and_open_browser,
-            args=(f"{base_url}/health", base_url),
+            args=(base_url, base_url),
             daemon=True,
         )
         thread.start()
