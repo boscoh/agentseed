@@ -1,6 +1,7 @@
 """Tests for the native Pydantic AI /agent/chat endpoint (offline, no network)."""
 
 import httpx
+import pytest
 from fastapi import FastAPI
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
@@ -13,6 +14,16 @@ from pydantic_ai.models.test import TestModel
 import agentseed.server as server
 
 
+@pytest.fixture(autouse=True)
+def no_real_agents(monkeypatch):
+    """Fail loudly if a test would build a real (networked) agent."""
+
+    def refuse(service, model=None):
+        raise AssertionError(f"test tried to build a real agent: {service}:{model}")
+
+    monkeypatch.setattr(server, "build_agent", refuse)
+
+
 def _user_history(text: str) -> bytes:
     """Return a one-message ModelMessage history, as the client would POST it."""
     return ModelMessagesTypeAdapter.dump_json(
@@ -21,8 +32,15 @@ def _user_history(text: str) -> bytes:
 
 
 def _test_app() -> FastAPI:
+    """Return an app whose startup agent is an offline TestModel.
+
+    httpx's ASGITransport doesn't run the lifespan, so set the state it would:
+    the agent *and* its model name, otherwise ``require_agent`` treats a
+    default request as a different pair and tries to build a real agent.
+    """
     app = server.create_app()
     app.state.agent = Agent(TestModel(), instructions="test")
+    app.state.model_name = server.default_model(server.CHAT_SERVICE)
     return app
 
 
@@ -103,8 +121,6 @@ def test_build_anthropic_model(monkeypatch):
 
 
 def test_build_anthropic_model_requires_key(monkeypatch):
-    import pytest
-
     from agentseed.providers import build_model
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
