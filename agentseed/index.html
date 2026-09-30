@@ -24,19 +24,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/atom-one-light.min.css">
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/highlight.min.js"></script>
 
-  <!-- Pug template compiler -->
-  <script src="https://pugjs.org/js/pug.js"></script>
   <script>
-    window.pug = require("pug");
-
-    function renderHtmlFromPug(str) {
-      const lines = str.replace(/^\n/, "").split("\n");
-      const minIndent = Math.min(
-        ...lines.filter((l) => l.trim()).map((l) => l.match(/^\s*/)[0].length),
-      );
-      return pug.render(lines.map((l) => l.slice(minIndent)).join("\n"));
-    }
-
     function renderMarkdown(text) {
       // Handle empty content (e.g., assistant messages with tool calls)
       if (!text) {
@@ -52,6 +40,11 @@
 
   <!-- Styles -->
   <style>
+    /* Hide the raw template until Vue mounts. */
+    [v-cloak] {
+      display: none;
+    }
+
     /* Allow long text to wrap and scroll */
     pre {
       white-space: pre-wrap; /* Preserve whitespace but allow wrapping */
@@ -321,7 +314,84 @@
 </head>
 
 <body>
-  <div id="app"></div>
+  <!-- Vue template: compiled in the browser by vue.global.js on mount. -->
+  <div id="app" v-cloak>
+    <div id="app-shell" class="d-flex flex-column">
+      <div class="header-section text-center">
+        <h1>{{ title }}</h1>
+        <select
+          v-if="config && config.models.length"
+          v-model="selected"
+          :disabled="isLoading"
+          class="form-select form-select-sm model-select"
+        >
+          <option
+            v-for="o in config.models"
+            :key="optionKey(o)"
+            :value="optionKey(o)"
+            :disabled="o.live === false"
+            :title="o.error || ''"
+          >{{ optionLabel(o) }}</option>
+        </select>
+      </div>
+
+      <div id="main-column" ref="mainColumn" class="d-flex flex-column flex-grow-1">
+        <div class="messages-area">
+          <div class="px-3">
+            <div class="messages-container">
+              <div
+                v-for="(msg, index) in display"
+                :key="index"
+                class="message mb-3"
+                :class="'message-' + index"
+              >
+                <div class="card" :class="getMessageClass(msg.role)">
+                  <div class="card-body">
+                    <div
+                      v-if="msg.role === 'assistant'"
+                      class="card-text"
+                      v-html="renderMarkdown(msg.content)"
+                    ></div>
+                    <div v-else class="card-text">{{ msg.content }}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="isLoading" class="message mb-3">
+                <div class="card bg-light">
+                  <div class="card-body">
+                    <pre class="card-text text-muted"><span class="thinking-dots"><span>.</span><span>.</span><span>.</span></span></pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="input-container position-relative">
+        <div style="padding: 0 16px;">
+          <div class="mb-2">
+            <textarea
+              v-model="userInput"
+              @keyup.enter.exact.prevent="sendMessage"
+              :disabled="isLoading"
+              class="form-control"
+              placeholder="Type your message here..."
+              rows="3"
+            ></textarea>
+          </div>
+          <div class="d-flex justify-content-between">
+            <button class="btn btn-outline-secondary" @click="confirmClearChat" :disabled="isLoading">Clear</button>
+            <button class="btn btn-info" @click="sendMessage" :disabled="isLoading || !userInput.trim()">
+              <span v-if="!isLoading">Send</span>
+              <span v-if="isLoading">Sending...</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </body>
 
 <script>
@@ -332,51 +402,6 @@
   //                        each tagged live: true | false | null (probe pending)
   //   POST /agent/chat  -> body and response are Pydantic AI ModelMessage arrays;
   //                        ?service=&model= picks the provider/model pair.
-
-  // language=pug
-  let template = renderHtmlFromPug(`
-    #app-shell.d-flex.flex-column
-      .header-section.text-center
-        h1 {{ title }}
-        select.form-select.form-select-sm.model-select(
-          v-if="config && config.models.length"
-          v-model="selected"
-          :disabled="isLoading"
-        )
-          option(
-            v-for="o in config.models"
-            :key="optionKey(o)"
-            :value="optionKey(o)"
-            :disabled="o.live === false"
-            :title="o.error || ''"
-          ) {{ optionLabel(o) }}
-      #main-column.d-flex.flex-column.flex-grow-1(ref="mainColumn")
-        .messages-area
-          .px-3
-            .messages-container
-              .message.mb-3(v-for="(msg, index) in display" :key="index" :class="'message-' + index")
-                .card(:class="getMessageClass(msg.role)")
-                  .card-body
-                    .card-text(v-if="msg.role === 'assistant'" v-html="renderMarkdown(msg.content)")
-                    .card-text(v-else) {{ msg.content }}
-              .message.mb-3(v-if="isLoading")
-                  .card.bg-light
-                    .card-body
-                      pre.card-text.text-muted
-                        span.thinking-dots
-                          span .
-                          span .
-                          span .
-      .input-container.position-relative
-         div(style="padding: 0 16px;")
-           .mb-2
-             textarea.form-control(v-model="userInput" @keyup.enter.exact.prevent="sendMessage" :disabled="isLoading" placeholder="Type your message here..." rows="3")
-           .d-flex.justify-content-between
-             button.btn.btn-outline-secondary(@click="confirmClearChat" :disabled="isLoading") Clear
-             button.btn.btn-info(@click="sendMessage" :disabled="isLoading || !userInput.trim()")
-               span(v-if="!isLoading") Send
-               span(v-if="isLoading") Sending...
-  `);
 
   const { createApp, ref, onMounted, nextTick, computed, watch } = Vue;
 
@@ -571,6 +596,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", () => {
-    createApp({ template, setup }).mount("#app");
+    // No `template` option: Vue compiles the markup already inside #app.
+    createApp({ setup }).mount("#app");
   });
 </script>

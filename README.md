@@ -72,8 +72,9 @@ Use `get_aws_config()` anywhere you create a boto3 client, e.g.
 
 The chat UI is a single file, `agentseed/index.html`, based on the one-page app
 template from [onepageapp](https://github.com/boscoh/onepageapp). FastAPI serves
-it at `/`. It loads Vue 3, Bootstrap, marked and pug from CDNs, so there is no
-build step: edit the file and reload the page.
+it at `/`. It loads Vue 3, Bootstrap and marked from CDNs, and the Vue template
+is plain HTML inside `#app`, so there is no build step: edit the file and reload
+the page.
 
 It keeps the conversation in `localStorage` as Pydantic AI `ModelMessage` JSON,
 and has a provider/model dropdown fed by `/config`. Providers that failed the
