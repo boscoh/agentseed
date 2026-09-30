@@ -19,7 +19,7 @@ from typing import Annotated, Any
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import ValidationError
 from pydantic_ai import Agent
@@ -260,26 +260,6 @@ def create_app() -> FastAPI:
             "model": getattr(request.app.state, "model_name", None),
             "models": models,
         }
-
-    @app.get("/providers/status")
-    async def providers_status(
-        request: Request,
-        service: list[str] | None = Query(default=None),
-        all_models: bool = False,
-    ) -> list[dict[str, Any]]:
-        """Live-probe providers with a tiny request each.
-
-        Each probe costs a few tokens, so this is on demand rather than polled.
-        Default-model results also refresh the live flags reported by /config.
-
-        :param request: Incoming request, used to reach ``app.state``.
-        :param service: Optional repeated filter, e.g. ``?service=openai&service=groq``.
-        :param all_models: Probe every configured model instead of each default.
-        :return: List of ``{"service", "model", "live", "latency_ms", "error"}``.
-        """
-        results = await check_models(service, all_models)
-        record_provider_status(request.app, results)
-        return results
 
     @app.get("/", include_in_schema=False)
     async def index() -> FileResponse:

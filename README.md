@@ -37,7 +37,6 @@ uv run agentseed check             # which providers are live?
 
 - `GET /` — chat UI (`agentseed/index.html`)
 - `GET /health` — liveness
-- `GET /providers/status[?service=&all_models=]` — live-probe providers (a few tokens each)
 - `GET /config` — default provider/model, availability, and all selectable `models` pairs
 - `POST /agent/chat[?service=&model=]` — native Pydantic AI message history (ModelMessage JSON arrays); optional query params pick a pair from `models.json`
 
@@ -106,8 +105,6 @@ uv run agentseed check                 # default model of every provider
 uv run agentseed check anthropic groq  # only these providers
 uv run agentseed check --all           # every model in models.json
 ```
-
-The same probe is available at `GET /providers/status`.
 
 ## Tests
 
