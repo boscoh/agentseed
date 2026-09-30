@@ -387,16 +387,8 @@
   const POLL_MS = 2000;
   const MAX_POLLS = 30;
 
-  /** Coerce a ModelMessage part's content (string | parts | anything) to text. */
-  function asText(content) {
-    if (typeof content === "string") return content;
-    if (Array.isArray(content)) {
-      return content
-        .map((c) => (typeof c === "string" ? c : typeof c?.content === "string" ? c.content : ""))
-        .join("");
-    }
-    return content == null ? "" : JSON.stringify(content);
-  }
+  /** Part content as text: strings as-is, anything else (e.g. tool args) as JSON. */
+  const asText = (c) => (typeof c === "string" ? c : c == null ? "" : JSON.stringify(c));
 
   /** Flatten Pydantic AI ModelMessages into user/assistant/tool bubbles. */
   function toDisplay(history) {
