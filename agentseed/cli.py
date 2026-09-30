@@ -89,47 +89,6 @@ def serve(
         )
 
 
-@app.command
-def check(
-    *services: str,
-    all_models: Annotated[bool, Parameter(name=["--all", "-a"])] = False,
-    timeout: float = 20.0,
-):
-    """Check which providers are live by sending each a tiny request.
-
-    :param services: Providers to check (default: all in models.json).
-    :param all_models: Check every configured model, not just each default.
-    :param timeout: Per-probe timeout in seconds.
-    """
-    import asyncio
-    import logging
-
-    from rich.console import Console
-    from rich.table import Table
-
-    from agentseed.providers import check_models
-
-    setup_logging(logging.WARNING)
-    console = Console()
-    with console.status("Probing providers..."):
-        results = asyncio.run(check_models(list(services) or None, all_models, timeout))
-
-    table = Table("", "service", "model", "latency", "error")
-    for r in results:
-        table.add_row(
-            "[green]✓[/]" if r["live"] else "[red]✗[/]",
-            r["service"],
-            r["model"],
-            f"{r['latency_ms']} ms",
-            r["error"] or "",
-        )
-    console.print(table)
-    live = sum(r["live"] for r in results)
-    console.print(f"{live}/{len(results)} live")
-    if live < len(results):
-        raise SystemExit(1)
-
-
 def main():
     app()
 

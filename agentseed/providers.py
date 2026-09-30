@@ -174,31 +174,18 @@ async def check_model(service: str, model: str, timeout: float = 20.0) -> dict[s
     }
 
 
-async def check_models(
-    services: list[str] | None = None,
-    all_models: bool = False,
-    timeout: float = 20.0,
-) -> list[dict[str, Any]]:
-    """Probe providers concurrently.
+async def check_models() -> list[dict[str, Any]]:
+    """Probe each provider's default model concurrently.
 
-    :param services: Providers to check; defaults to every provider in models.json.
-    :param all_models: Check every configured model, not just each provider's default.
-    :param timeout: Per-probe timeout in seconds.
-    :return: One ``check_model`` result per probed pair, in config order.
+    :return: One ``check_model`` result per provider, in config order.
     """
     import asyncio
 
     pairs = [
-        o
-        for o in chat_model_options()
-        if services is None or o["service"] in services
+        o for o in chat_model_options() if o["model"] == default_model(o["service"])
     ]
-    if not all_models:
-        pairs = [o for o in pairs if o["model"] == default_model(o["service"])]
     return list(
-        await asyncio.gather(
-            *(check_model(o["service"], o["model"], timeout) for o in pairs)
-        )
+        await asyncio.gather(*(check_model(o["service"], o["model"]) for o in pairs))
     )
 
 

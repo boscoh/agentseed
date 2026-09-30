@@ -99,26 +99,9 @@ async def probe_providers(app: FastAPI) -> None:
     except Exception as e:
         logger.warning(f"Provider probe failed: {e}")
         return
-    record_provider_status(app, results)
+    app.state.provider_status = {r["service"]: r for r in results}
     live = [r["service"] for r in results if r["live"]]
     logger.info(f"Live providers: {', '.join(live) or 'none'}")
-
-
-def record_provider_status(app: FastAPI, results: list[dict[str, Any]]) -> None:
-    """Store default-model probe results keyed by service.
-
-    A provider's default model stands in for the provider, so non-default
-    results (from ``all_models`` probes) are ignored here.
-
-    :param app: FastAPI application whose ``provider_status`` is updated.
-    :param results: ``check_model`` results.
-    """
-    statuses = getattr(app.state, "provider_status", None)
-    if statuses is None:
-        statuses = app.state.provider_status = {}
-    for r in results:
-        if r["model"] == default_model(r["service"]):
-            statuses[r["service"]] = r
 
 
 def require_agent(

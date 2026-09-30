@@ -29,8 +29,6 @@ export GROQ_API_KEY=gsk_...            # Groq
 
 uv run agentseed
 # http://localhost:8000
-
-uv run agentseed check             # which providers are live?
 ```
 
 ## Endpoints
@@ -87,23 +85,11 @@ startup probe are shown disabled, with the error on hover.
   selection (default `bedrock`), and `get_aws_config`
 - `agentseed/server.py` — FastAPI app (`/`, `/config`, `/agent/chat`)
   and the Pydantic AI agent builder
-- `agentseed/cli.py` — `agentseed` (serve, default) and `agentseed check` (cyclopts + uvicorn)
+- `agentseed/cli.py` — `agentseed` server command (cyclopts + uvicorn)
 - `agentseed/logger.py` — Rich logging setup
 - `agentseed/models.json` — selectable chat and embedding models
 - `agentseed/index.html` — single-file chat UI (Vue 3 + Bootstrap via CDN)
 - `tests/` — offline tests for the chat endpoint
-
-## Checking providers
-
-`agentseed check` sends each provider's default model a one-word prompt
-(capped at 16 output tokens) and prints a table of live/failed providers with
-latency and the error. It exits non-zero if any probe fails.
-
-```bash
-uv run agentseed check                 # default model of every provider
-uv run agentseed check anthropic groq  # only these providers
-uv run agentseed check --all           # every model in models.json
-```
 
 ## Tests
 
