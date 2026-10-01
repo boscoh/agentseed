@@ -13,7 +13,7 @@ import os
 from datetime import datetime, timezone
 from functools import cache, lru_cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import boto3
 from botocore.exceptions import TokenRetrievalError
@@ -78,17 +78,6 @@ def require_env(name: str) -> str:
     return value
 
 
-def ollama_provider():
-    """Build an Ollama provider, defaulting to the local OpenAI-compatible URL.
-
-    :return: Configured ``OllamaProvider``.
-    """
-    from pydantic_ai.providers.ollama import OllamaProvider
-
-    base_url = os.getenv("OLLAMA_BASE_URL", OLLAMA_DEFAULT_BASE_URL)
-    return OllamaProvider(base_url=base_url)
-
-
 def build_model(service: str, model: str):
     """Return a Pydantic AI model for the requested service.
 
@@ -100,34 +89,37 @@ def build_model(service: str, model: str):
     :return: A Pydantic AI ``Model`` instance.
     :raises ValueError: If the service is unknown or its credentials are missing.
     """
+    Model: Any
+    Provider: Any
+    kwargs: dict[str, Any]
     if service == "openai":
-        from pydantic_ai.models.openai import OpenAIChatModel
-        from pydantic_ai.providers.openai import OpenAIProvider
+        from pydantic_ai.models.openai import OpenAIChatModel as Model
+        from pydantic_ai.providers.openai import OpenAIProvider as Provider
 
-        provider = OpenAIProvider(api_key=require_env("OPENAI_API_KEY"))
-        return OpenAIChatModel(model, provider=provider)
-    if service == "anthropic":
-        from pydantic_ai.models.anthropic import AnthropicModel
-        from pydantic_ai.providers.anthropic import AnthropicProvider
+        kwargs = {"api_key": require_env("OPENAI_API_KEY")}
+    elif service == "anthropic":
+        from pydantic_ai.models.anthropic import AnthropicModel as Model
+        from pydantic_ai.providers.anthropic import AnthropicProvider as Provider
 
-        provider = AnthropicProvider(api_key=require_env("ANTHROPIC_API_KEY"))
-        return AnthropicModel(model, provider=provider)
-    if service == "groq":
-        from pydantic_ai.models.groq import GroqModel
-        from pydantic_ai.providers.groq import GroqProvider
+        kwargs = {"api_key": require_env("ANTHROPIC_API_KEY")}
+    elif service == "groq":
+        from pydantic_ai.models.groq import GroqModel as Model
+        from pydantic_ai.providers.groq import GroqProvider as Provider
 
-        provider = GroqProvider(api_key=require_env("GROQ_API_KEY"))
-        return GroqModel(model, provider=provider)
-    if service == "ollama":
-        from pydantic_ai.models.ollama import OllamaModel
+        kwargs = {"api_key": require_env("GROQ_API_KEY")}
+    elif service == "ollama":
+        from pydantic_ai.models.ollama import OllamaModel as Model
+        from pydantic_ai.providers.ollama import OllamaProvider as Provider
 
-        return OllamaModel(model, provider=ollama_provider())
-    if service == "bedrock":
-        from pydantic_ai.models.bedrock import BedrockConverseModel
-        from pydantic_ai.providers.bedrock import BedrockProvider
+        kwargs = {"base_url": os.getenv("OLLAMA_BASE_URL", OLLAMA_DEFAULT_BASE_URL)}
+    elif service == "bedrock":
+        from pydantic_ai.models.bedrock import BedrockConverseModel as Model
+        from pydantic_ai.providers.bedrock import BedrockProvider as Provider
 
-        return BedrockConverseModel(model, provider=BedrockProvider(**get_aws_config()))
-    raise ValueError(f"Unknown chat client type: {service}")
+        kwargs = get_aws_config()
+    else:
+        raise ValueError(f"Unknown chat client type: {service}")
+    return Model(model, provider=Provider(**kwargs))
 
 
 async def check_model(service: str, model: str, timeout: float = 20.0) -> dict[str, Any]:
@@ -209,8 +201,12 @@ async def embed(service: str, model: str, text: str) -> list[float]:
         embedding_model = OpenAIEmbeddingModel(model)
     elif service == "ollama":
         from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
+        from pydantic_ai.providers.ollama import OllamaProvider
 
-        embedding_model = OpenAIEmbeddingModel(model, provider=ollama_provider())
+        base_url = os.getenv("OLLAMA_BASE_URL", OLLAMA_DEFAULT_BASE_URL)
+        embedding_model = OpenAIEmbeddingModel(
+            model, provider=OllamaProvider(base_url=base_url)
+        )
     elif service == "bedrock":
         from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
         from pydantic_ai.providers.bedrock import BedrockProvider
@@ -368,10 +364,6 @@ def get_aws_config() -> dict[str, Any]:
 
     return aws_config
 
-
-LLM_SERVICES = ("openai", "anthropic", "ollama", "bedrock", "groq")
-
-LLMService = Literal["openai", "anthropic", "ollama", "bedrock", "groq"]
 
 # Selected provider for the app, overridable with the CHAT_SERVICE environment
 # variable. Bedrock is the default so deploys work without editing code.
