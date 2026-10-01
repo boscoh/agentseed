@@ -289,6 +289,39 @@
       border-radius: 8px;
       padding: 4px 8px;
     }
+    .model-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+    .model-row .model-select {
+      margin: 0;
+      width: auto;
+    }
+    .model-status {
+      font-size: 12px;
+      color: #6e6e73;
+      white-space: nowrap;
+    }
+    .model-status .dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+    .model-status.ready .dot { background: #34c759; }
+    .model-status.failed .dot { background: #ff3b30; }
+    .model-status .spinner-border {
+      width: 10px;
+      height: 10px;
+      border-width: 2px;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
 
     .message .card.tool-card {
       background-color: #f5f5f7 !important;
@@ -319,20 +352,33 @@
     <div id="app-shell" class="d-flex flex-column">
       <div class="header-section text-center">
         <h1>{{ title }}</h1>
-        <select
-          v-if="config && config.models.length"
-          v-model="selected"
-          :disabled="isLoading"
-          class="form-select form-select-sm model-select"
-        >
-          <option
-            v-for="o in config.models"
-            :key="optionKey(o)"
-            :value="optionKey(o)"
-            :disabled="o.live === false"
-            :title="o.error || ''"
-          >{{ optionLabel(o) }}</option>
-        </select>
+        <div v-if="config && config.models.length" class="model-row">
+          <select
+            v-model="selected"
+            :disabled="isLoading"
+            class="form-select form-select-sm model-select"
+          >
+            <option
+              v-for="o in config.models"
+              :key="optionKey(o)"
+              :value="optionKey(o)"
+              :disabled="o.live === false"
+              :title="o.error || ''"
+            >{{ optionLabel(o) }}</option>
+          </select>
+          <span
+            v-if="activation.state !== 'idle'"
+            class="model-status"
+            :class="activation.state"
+            :title="activation.error || (activation.latencyMs != null ? activation.latencyMs + ' ms' : '')"
+          >
+            <template v-if="activation.state === 'activating'">
+              <span class="spinner-border text-secondary"></span>connecting…
+            </template>
+            <template v-else-if="activation.state === 'ready'"><span class="dot"></span>ready</template>
+            <template v-else><span class="dot"></span>unavailable</template>
+          </span>
+        </div>
       </div>
 
       <div id="main-column" ref="mainColumn" class="d-flex flex-column flex-grow-1">
@@ -383,7 +429,7 @@
           </div>
           <div class="d-flex justify-content-between">
             <button class="btn btn-outline-secondary" @click="confirmClearChat" :disabled="isLoading">Clear</button>
-            <button class="btn btn-info" @click="sendMessage" :disabled="isLoading || !userInput.trim()">
+            <button class="btn btn-info" @click="sendMessage" :disabled="isLoading || activating || !userInput.trim()">
               <span v-if="!isLoading">Send</span>
               <span v-if="isLoading">Sending...</span>
             </button>
@@ -398,10 +444,13 @@
   // Chat UI for agentseed. Based on onepageapp (https://github.com/boscoh/onepageapp).
   //
   // API (see agentseed/server.py):
-  //   GET  /config      -> default provider/model plus every selectable pair,
-  //                        each tagged live: true | false | null (probe pending)
-  //   POST /agent/chat  -> body and response are Pydantic AI ModelMessage arrays;
-  //                        ?service=&model= picks the provider/model pair.
+  //   GET  /config         -> default provider/model plus every selectable pair,
+  //                           each tagged live: true | false | null (probe pending)
+  //                           and checked (status measured for that exact model)
+  //   POST /agent/activate -> ?service=&model= builds and probes a pair when it is
+  //                           picked; returns {live, error, latency_ms, ...}
+  //   POST /agent/chat     -> body and response are Pydantic AI ModelMessage arrays;
+  //                           ?service=&model= picks the provider/model pair.
 
   const { createApp, ref, onMounted, nextTick, computed, watch } = Vue;
 
@@ -466,6 +515,11 @@
     const mainColumn = ref(null);
     const config = ref(null);
     const selected = ref(localStorage.getItem(SELECTED_KEY) || "");
+    // Result of probing the selected pair: idle | activating | ready | failed.
+    const activation = ref({ key: "", state: "idle", error: null, latencyMs: null });
+    const activating = computed(() => activation.value.state === "activating");
+    let lastGood = ""; // last selection that came back live
+    let activationSeq = 0; // drops responses for selections the user has moved past
 
     const title = ref("agentseed");
     // Interleave error bubbles into the rendered conversation.
@@ -501,7 +555,51 @@
     };
 
     watch(() => history.value, () => localStorage.setItem(HISTORY_KEY, JSON.stringify(history.value)), { deep: true });
-    watch(selected, (value) => localStorage.setItem(SELECTED_KEY, value));
+
+    /** Copy a fresh status from /agent/activate into the dropdown's options. */
+    const updateOptionStatus = (s) => {
+      const o = config.value?.models.find((m) => m.service === s.service && m.model === s.model);
+      if (o) Object.assign(o, { live: s.live, error: s.error, latency_ms: s.latency_ms, checked: true });
+    };
+
+    /** Build and probe the selected pair; go back to the last working one if it fails. */
+    async function activate(key) {
+      const option = config.value?.models.find((o) => optionKey(o) === key);
+      if (!option) return;
+      const seq = ++activationSeq;
+      activation.value = { key, state: "activating", error: null, latencyMs: null };
+      let status;
+      try {
+        const params = new URLSearchParams({ service: option.service, model: option.model });
+        status = await ky.post(`/agent/activate?${params}`, { timeout: 60000 }).json();
+      } catch (error) {
+        const body = await error.response?.json().catch(() => null);
+        status = { live: false, error: body?.detail || error.message };
+      }
+      if (seq !== activationSeq) return; // the user picked again meanwhile
+      if (status.service) updateOptionStatus(status);
+      if (status.live) {
+        lastGood = key;
+        activation.value = { key, state: "ready", error: null, latencyMs: status.latency_ms };
+        return;
+      }
+      activation.value = { key, state: "failed", error: status.error, latencyMs: null };
+      const label = `${option.service} / ${option.model}`;
+      if (lastGood && lastGood !== key) {
+        errors.value = [{
+          afterIndex: -1,
+          content: `Couldn't switch to ${label}: ${status.error}. Still using ${lastGood.replace(":", " / ")}.`,
+        }];
+        selected.value = lastGood;
+      } else {
+        errors.value = [{ afterIndex: -1, content: `${label} is unavailable: ${status.error}` }];
+      }
+    }
+
+    watch(selected, (value) => {
+      localStorage.setItem(SELECTED_KEY, value);
+      activate(value);
+    });
 
     /** Keep the selection usable: current if not dead, else server default, else first live. */
     const fixSelection = (data) => {
@@ -519,7 +617,11 @@
       try {
         const data = await ky.get("/config").json();
         config.value = data;
+        const before = selected.value;
         fixSelection(data);
+        // On first load, probe the remembered pick. If fixSelection changed it,
+        // the selected watcher already started the probe.
+        if (polls === 0 && selected.value === before) activate(before);
         if (data.models.some((o) => o.live === null) && polls < MAX_POLLS) {
           setTimeout(() => fetchConfig(polls + 1), POLL_MS);
         }
@@ -536,7 +638,7 @@
 
     async function sendMessage() {
       const text = userInput.value.trim();
-      if (!text || isLoading.value) return;
+      if (!text || isLoading.value || activating.value) return;
 
       const userMessage = {
         kind: "request",
@@ -588,6 +690,8 @@
       title,
       config,
       selected,
+      activation,
+      activating,
       optionKey,
       optionLabel,
       confirmClearChat,
