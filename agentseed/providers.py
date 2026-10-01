@@ -181,6 +181,46 @@ async def check_models() -> list[dict[str, Any]]:
     )
 
 
+def build_embedding_model(service: str, model: str):
+    """Return a Pydantic AI embedding model for the requested service.
+
+    Mirrors ``build_model``: provider packages are imported lazily, and each
+    service gets the same credentials or base URL as its chat model.
+
+    :param service: One of ``openai``, ``ollama``, ``bedrock``.
+    :param model: Provider embedding model name.
+    :return: A Pydantic AI ``EmbeddingModel`` instance.
+    :raises NotImplementedError: For services without embedding support.
+    :raises ValueError: If the service is unknown or its credentials are missing.
+    """
+    Model: Any
+    Provider: Any
+    kwargs: dict[str, Any]
+    if service == "openai":
+        from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel as Model
+        from pydantic_ai.providers.openai import OpenAIProvider as Provider
+
+        kwargs = {"api_key": require_env("OPENAI_API_KEY")}
+    elif service == "ollama":
+        # Ollama serves an OpenAI-compatible embeddings endpoint.
+        from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel as Model
+        from pydantic_ai.providers.ollama import OllamaProvider as Provider
+
+        kwargs = {"base_url": os.getenv("OLLAMA_BASE_URL", OLLAMA_DEFAULT_BASE_URL)}
+    elif service == "bedrock":
+        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel as Model
+        from pydantic_ai.providers.bedrock import BedrockProvider as Provider
+
+        kwargs = get_aws_config()
+    elif service in ("anthropic", "groq"):
+        raise NotImplementedError(
+            f"{service} does not support text embeddings. Use openai, ollama, or bedrock."
+        )
+    else:
+        raise ValueError(f"Unknown embedding service: {service}")
+    return Model(model, provider=Provider(**kwargs))
+
+
 async def embed(service: str, model: str, text: str) -> list[float]:
     """Embed text with the given service and model.
 
@@ -189,34 +229,9 @@ async def embed(service: str, model: str, text: str) -> list[float]:
     :param text: Text to embed.
     :return: Embedding vector.
     :raises NotImplementedError: For services without embedding support.
-    :raises ValueError: If the service is unknown.
+    :raises ValueError: If the service is unknown or its credentials are missing.
     """
-    if service in ("groq", "anthropic"):
-        raise NotImplementedError(
-            f"{service} does not support text embeddings. Use openai, ollama, or bedrock."
-        )
-    if service == "openai":
-        from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
-
-        embedding_model = OpenAIEmbeddingModel(model)
-    elif service == "ollama":
-        from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
-        from pydantic_ai.providers.ollama import OllamaProvider
-
-        base_url = os.getenv("OLLAMA_BASE_URL", OLLAMA_DEFAULT_BASE_URL)
-        embedding_model = OpenAIEmbeddingModel(
-            model, provider=OllamaProvider(base_url=base_url)
-        )
-    elif service == "bedrock":
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
-        from pydantic_ai.providers.bedrock import BedrockProvider
-
-        embedding_model = BedrockEmbeddingModel(
-            model, provider=BedrockProvider(**get_aws_config())
-        )
-    else:
-        raise ValueError(f"Unknown embedding service: {service}")
-
+    embedding_model = build_embedding_model(service, model)
     result = await embedding_model.embed(text, input_type="document")
     return list(result.embeddings[0])
 
