@@ -22,12 +22,6 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/boscoh/agentseed"
 
-[dependency-groups]
-dev = [
-    "pytest>=9.0.2",
-    "pytest-asyncio>=1.3.0",
-]
-
 [project.scripts]
 agentseed = "agentseed.cli:main"
 
