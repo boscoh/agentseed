@@ -18,11 +18,10 @@ Groq, Ollama) behind one async interface.
 ```bash
 uv sync
 
-# Configure a provider (bedrock is the default)
+# Configure a provider (the first entry in agentseed/models.json is the default)
 export AWS_PROFILE=my-profile          # Bedrock (SSO)
 export AWS_REGION=ap-southeast-2       # Bedrock
 aws sso login --profile my-profile
-# export CHAT_SERVICE=openai|anthropic|groq|ollama   # override provider
 export OPENAI_API_KEY=sk-...           # OpenAI
 export ANTHROPIC_API_KEY=sk-ant-...    # Anthropic
 export GROQ_API_KEY=gsk_...            # Groq
@@ -34,8 +33,11 @@ uv run agentseed
 ## Endpoints
 
 - `GET /` — chat UI (`agentseed/index.html`)
-- `GET /config` — default provider/model, availability, and all selectable `models` pairs
-- `POST /agent/chat[?service=&model=]` — native Pydantic AI message history (ModelMessage JSON arrays); optional query params pick a pair from `models.json`
+- `GET /config` — default provider/model, availability, and all selectable `models` pairs with per-model `live`/`error`/`latency_ms`/`checked`
+- `POST /agent/activate?service=&model=[&force=true]` — build and probe a pair as soon as it's picked; returns 200 with `live: true|false` (cached for `ACTIVATE_TTL_S`, default 300s)
+- `POST /agent/chat[?service=&model=]` — native Pydantic AI message history (ModelMessage JSON arrays); optional query params pick a pair from `models.json`. Replies are labelled with `metadata.agentseed_model`; when the model changes, the new model is told for that turn that earlier replies came from another model.
+
+Built agents are kept in a least-recently-used cache of `AGENT_CACHE_SIZE` (default 8); the startup agent is never dropped. See `docs/spec-active-model-selection.md`.
 
 ## AWS credentials
 
@@ -78,13 +80,16 @@ the page.
 
 It keeps the conversation in `localStorage` as Pydantic AI `ModelMessage` JSON,
 and has a provider/model dropdown fed by `/config`. Providers that failed the
-startup probe are shown disabled, with the error on hover.
+startup probe are shown disabled, with the error on hover. Picking a model calls
+`/agent/activate` straight away and shows connecting / ready / unavailable next
+to the dropdown; Send is disabled while it checks, and a failed pick goes back
+to the last working model.
 
 ## Layout
 
-- `agentseed/providers.py` — Pydantic AI model/embedding builders, `CHAT_SERVICE`
-  selection (default `bedrock`), and `get_aws_config`
-- `agentseed/server.py` — FastAPI app (`/`, `/config`, `/agent/chat`)
+- `agentseed/providers.py` — Pydantic AI model/embedding builders, the default
+  provider/model (first chat model in `models.json`), and `get_aws_config`
+- `agentseed/server.py` — FastAPI app (`/`, `/config`, `/agent/activate`, `/agent/chat`)
   and the Pydantic AI agent builder
 - `agentseed/cli.py` — `agentseed` server command (cyclopts + uvicorn)
 - `agentseed/logger.py` — Rich logging setup

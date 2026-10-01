@@ -38,16 +38,8 @@ def load_config() -> dict[str, Any]:
     return config
 
 
-def default_model(service: str) -> str | None:
-    """Return the first configured chat model for a service from models.json.
-
-    :param service: One of ``openai``, ``anthropic``, ``groq``, ``ollama``, ``bedrock``.
-    :return: Model name, or None if the service has no configured models.
-    """
-    models = load_config().get("chat_models", {}).get(service, [])
-    if isinstance(models, list):
-        return models[0] if models else None
-    return models
+class UnknownModelError(ValueError):
+    """Raised for a provider/model pair that is not listed in models.json."""
 
 
 def chat_model_options() -> list[dict[str, str]]:
@@ -60,6 +52,34 @@ def chat_model_options() -> list[dict[str, str]]:
         for model in models if isinstance(models, list) else [models]:
             options.append({"service": service, "model": model})
     return options
+
+
+def resolve_chat_model(
+    service: str | None = None, model: str | None = None
+) -> tuple[str, str]:
+    """Fill in defaults for a provider/model pair and check it is configured.
+
+    This is the one place chat defaults are decided, all from models.json order:
+
+    - no service: the first provider listed (the server default);
+    - no model: that provider's first model.
+
+    :param service: Provider name, or None for the default provider.
+    :param model: Model name, or None for the provider's first model.
+    :return: ``(service, model)``, guaranteed to be listed in models.json.
+    :raises UnknownModelError: If the pair (or provider) is not configured.
+    """
+    pairs = [(o["service"], o["model"]) for o in chat_model_options()]
+    if not pairs:
+        raise UnknownModelError("No chat models configured in models.json")
+    service = service or pairs[0][0]
+    if model is None:
+        model = next((m for s, m in pairs if s == service), None)
+        if model is None:
+            raise UnknownModelError(f"unknown provider: {service}")
+    if (service, model) not in pairs:
+        raise UnknownModelError(f"unknown provider/model: {service}:{model}")
+    return service, model
 
 
 def require_env(name: str) -> str:
@@ -173,12 +193,9 @@ async def check_models() -> list[dict[str, Any]]:
     """
     import asyncio
 
-    pairs = [
-        o for o in chat_model_options() if o["model"] == default_model(o["service"])
-    ]
-    return list(
-        await asyncio.gather(*(check_model(o["service"], o["model"]) for o in pairs))
-    )
+    services = dict.fromkeys(o["service"] for o in chat_model_options())
+    pairs = [resolve_chat_model(service) for service in services]
+    return list(await asyncio.gather(*(check_model(s, m) for s, m in pairs)))
 
 
 def build_embedding_model(service: str, model: str):
@@ -378,8 +395,3 @@ def get_aws_config() -> dict[str, Any]:
         ) from e
 
     return aws_config
-
-
-# Selected provider for the app, overridable with the CHAT_SERVICE environment
-# variable. Bedrock is the default so deploys work without editing code.
-CHAT_SERVICE = os.getenv("CHAT_SERVICE", "bedrock")
