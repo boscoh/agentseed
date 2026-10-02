@@ -10,9 +10,11 @@ import logging
 from rich.console import Console
 from rich.logging import RichHandler
 
-# Levels for app and third-party loggers. Third-party providers are quieted
-# because Pydantic AI delegates to them (boto3 for Bedrock, openai/httpx for
-# the HTTP providers) and they log request detail at INFO/DEBUG.
+# Levels for app and third-party loggers. Pydantic AI delegates to provider
+# SDKs that log through different HTTP clients: groq uses httpx, while openai
+# (also used for ollama) and anthropic use the httpx2 fork. Both are kept at
+# INFO so every provider logs one "HTTP Request: POST ..." line per call;
+# Bedrock (botocore) gets the same line from a hook in providers.py.
 LOGGER_LEVELS: dict[str, int] = {
     "__main__": logging.INFO,
     "boto3": logging.INFO,
@@ -21,7 +23,8 @@ LOGGER_LEVELS: dict[str, int] = {
     "uvicorn.server": logging.INFO,
     "botocore": logging.WARNING,
     "urllib3": logging.WARNING,
-    "httpx": logging.WARNING,
+    "httpx": logging.INFO,
+    "httpx2": logging.INFO,
     "httpcore": logging.WARNING,
     "openai": logging.WARNING,
     "pydantic_ai": logging.WARNING,

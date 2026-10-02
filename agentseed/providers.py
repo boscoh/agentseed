@@ -12,6 +12,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from functools import cache, lru_cache
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,20 @@ from botocore.exceptions import TokenRetrievalError
 logger = logging.getLogger(__name__)
 
 OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434/v1"
+
+
+def _log_bedrock_request(http_response, **_: Any) -> None:
+    """Log a Bedrock call like httpx does for the HTTP-based providers.
+
+    botocore has no equivalent of httpx's ``HTTP Request: POST ...`` INFO line,
+    so this is hooked onto the client's ``after-call`` event.
+    """
+    status = http_response.status_code
+    try:
+        reason = HTTPStatus(status).phrase
+    except ValueError:
+        reason = ""
+    logger.info(f'HTTP Request: POST {http_response.url} "HTTP/1.1 {status} {reason}"')
 
 
 @lru_cache
@@ -139,7 +154,12 @@ def build_model(service: str, model: str):
         kwargs = get_aws_config()
     else:
         raise ValueError(f"Unknown chat client type: {service}")
-    return Model(model, provider=Provider(**kwargs))
+    provider = Provider(**kwargs)
+    if service == "bedrock":
+        provider.client.meta.events.register(
+            "after-call.bedrock-runtime", _log_bedrock_request
+        )
+    return Model(model, provider=provider)
 
 
 async def check_model(service: str, model: str, timeout: float = 20.0) -> dict[str, Any]:
@@ -235,7 +255,12 @@ def build_embedding_model(service: str, model: str):
         )
     else:
         raise ValueError(f"Unknown embedding service: {service}")
-    return Model(model, provider=Provider(**kwargs))
+    provider = Provider(**kwargs)
+    if service == "bedrock":
+        provider.client.meta.events.register(
+            "after-call.bedrock-runtime", _log_bedrock_request
+        )
+    return Model(model, provider=provider)
 
 
 async def embed(service: str, model: str, text: str) -> list[float]:
