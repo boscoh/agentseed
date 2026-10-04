@@ -10,14 +10,15 @@ import hashlib
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from functools import cache, lru_cache
 from http import HTTPStatus
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import boto3
 from botocore.exceptions import TokenRetrievalError
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -54,25 +55,68 @@ def load_config() -> dict[str, Any]:
 
 
 class UnknownModelError(ValueError):
-    """Raised for a provider/model pair that is not listed in models.json."""
+    """Raised for a provider/model that is not listed in models.json."""
 
 
-def chat_model_options() -> list[dict[str, str]]:
-    """Return every selectable chat provider/model pair from models.json.
+class ModelRef(NamedTuple):
+    """A chat model listed in models.json; also the key for per-model server state."""
 
-    :return: List of ``{"service": ..., "model": ...}`` dicts in config order.
+    service: str
+    model: str
+
+    def __str__(self) -> str:
+        """Return the ``service:model`` form used in logs and reply metadata."""
+        return f"{self.service}:{self.model}"
+
+
+class ModelStatus(BaseModel):
+    """The latest health check (probe or real request) for one model."""
+
+    service: str
+    model: str
+    live: bool
+    error: str | None = None
+    latency_ms: int | None = None
+    checked_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @classmethod
+    def of(cls, chat_model: ModelRef, **fields: Any) -> "ModelStatus":
+        """Build a status for ``chat_model`` with the given fields."""
+        return cls(**chat_model._asdict(), **fields)
+
+    @property
+    def chat_model(self) -> ModelRef:
+        """Return the model this status describes."""
+        return ModelRef(self.service, self.model)
+
+    def is_fresh(self, ttl_s: float) -> bool:
+        """Return True if live and checked within ``ttl_s`` seconds."""
+        age = (datetime.now(UTC) - self.checked_at).total_seconds()
+        return self.live and age < ttl_s
+
+
+def first_line(e: BaseException) -> str:
+    """Return a one-line error message for status records."""
+    text = str(e).strip()
+    return text.splitlines()[0] if text else type(e).__name__
+
+
+def chat_model_options() -> list[ModelRef]:
+    """Return every selectable chat model from models.json.
+
+    :return: ``ModelRef`` per model, in config order.
     """
     options = []
     for service, models in load_config().get("chat_models", {}).items():
         for model in models if isinstance(models, list) else [models]:
-            options.append({"service": service, "model": model})
+            options.append(ModelRef(service, model))
     return options
 
 
 def resolve_chat_model(
     service: str | None = None, model: str | None = None
-) -> tuple[str, str]:
-    """Fill in defaults for a provider/model pair and check it is configured.
+) -> ModelRef:
+    """Fill in defaults for a provider/model and check it is configured.
 
     This is the one place chat defaults are decided, all from models.json order:
 
@@ -81,20 +125,21 @@ def resolve_chat_model(
 
     :param service: Provider name, or None for the default provider.
     :param model: Model name, or None for the provider's first model.
-    :return: ``(service, model)``, guaranteed to be listed in models.json.
-    :raises UnknownModelError: If the pair (or provider) is not configured.
+    :return: A ``ModelRef`` guaranteed to be listed in models.json.
+    :raises UnknownModelError: If the chat_model (or provider) is not configured.
     """
-    pairs = [(o["service"], o["model"]) for o in chat_model_options()]
-    if not pairs:
+    chat_models = chat_model_options()
+    if not chat_models:
         raise UnknownModelError("No chat models configured in models.json")
-    service = service or pairs[0][0]
+    service = service or chat_models[0].service
     if model is None:
-        model = next((m for s, m in pairs if s == service), None)
+        model = next((m.model for m in chat_models if m.service == service), None)
         if model is None:
             raise UnknownModelError(f"unknown provider: {service}")
-    if (service, model) not in pairs:
-        raise UnknownModelError(f"unknown provider/model: {service}:{model}")
-    return service, model
+    chat_model = ModelRef(service, model)
+    if chat_model not in chat_models:
+        raise UnknownModelError(f"unknown provider/model: {chat_model}")
+    return chat_model
 
 
 def require_env(name: str) -> str:
@@ -113,11 +158,48 @@ def require_env(name: str) -> str:
     return value
 
 
-def build_model(service: str, model: str):
-    """Return a Pydantic AI model for the requested service.
+def build_provider(service: str) -> Any:
+    """Return a Pydantic AI provider with this service's credentials or base URL.
 
-    Provider packages are imported lazily so a missing optional dependency only
-    affects the service that needs it.
+    Shared by ``build_model`` and ``build_embedding_model``. Provider packages
+    are imported lazily so a missing optional dependency only affects the
+    service that needs it.
+
+    :param service: One of ``openai``, ``anthropic``, ``groq``, ``ollama``, ``bedrock``.
+    :return: A configured provider instance.
+    :raises ValueError: If the service is unknown or its credentials are missing.
+    """
+    if service == "openai":
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+        return OpenAIProvider(api_key=require_env("OPENAI_API_KEY"))
+    if service == "anthropic":
+        from pydantic_ai.providers.anthropic import AnthropicProvider
+
+        return AnthropicProvider(api_key=require_env("ANTHROPIC_API_KEY"))
+    if service == "groq":
+        from pydantic_ai.providers.groq import GroqProvider
+
+        return GroqProvider(api_key=require_env("GROQ_API_KEY"))
+    if service == "ollama":
+        from pydantic_ai.providers.ollama import OllamaProvider
+
+        return OllamaProvider(
+            base_url=os.getenv("OLLAMA_BASE_URL", OLLAMA_DEFAULT_BASE_URL)
+        )
+    if service == "bedrock":
+        from pydantic_ai.providers.bedrock import BedrockProvider
+
+        provider = BedrockProvider(**get_aws_config())
+        provider.client.meta.events.register(
+            "after-call.bedrock-runtime", _log_bedrock_request
+        )
+        return provider
+    raise ValueError(f"Unknown provider: {service}")
+
+
+def build_model(service: str, model: str):
+    """Return a Pydantic AI chat model for the requested service.
 
     :param service: One of ``openai``, ``anthropic``, ``groq``, ``ollama``, ``bedrock``.
     :param model: Provider model name.
@@ -125,53 +207,30 @@ def build_model(service: str, model: str):
     :raises ValueError: If the service is unknown or its credentials are missing.
     """
     Model: Any
-    Provider: Any
-    kwargs: dict[str, Any]
     if service == "openai":
         from pydantic_ai.models.openai import OpenAIChatModel as Model
-        from pydantic_ai.providers.openai import OpenAIProvider as Provider
-
-        kwargs = {"api_key": require_env("OPENAI_API_KEY")}
     elif service == "anthropic":
         from pydantic_ai.models.anthropic import AnthropicModel as Model
-        from pydantic_ai.providers.anthropic import AnthropicProvider as Provider
-
-        kwargs = {"api_key": require_env("ANTHROPIC_API_KEY")}
     elif service == "groq":
         from pydantic_ai.models.groq import GroqModel as Model
-        from pydantic_ai.providers.groq import GroqProvider as Provider
-
-        kwargs = {"api_key": require_env("GROQ_API_KEY")}
     elif service == "ollama":
         from pydantic_ai.models.ollama import OllamaModel as Model
-        from pydantic_ai.providers.ollama import OllamaProvider as Provider
-
-        kwargs = {"base_url": os.getenv("OLLAMA_BASE_URL", OLLAMA_DEFAULT_BASE_URL)}
     elif service == "bedrock":
         from pydantic_ai.models.bedrock import BedrockConverseModel as Model
-        from pydantic_ai.providers.bedrock import BedrockProvider as Provider
-
-        kwargs = get_aws_config()
     else:
         raise ValueError(f"Unknown chat client type: {service}")
-    provider = Provider(**kwargs)
-    if service == "bedrock":
-        provider.client.meta.events.register(
-            "after-call.bedrock-runtime", _log_bedrock_request
-        )
-    return Model(model, provider=provider)
+    return Model(model, provider=build_provider(service))
 
 
-async def check_model(service: str, model: str, timeout: float = 20.0) -> dict[str, Any]:
+async def check_model(chat_model: ModelRef, timeout: float = 20.0) -> ModelStatus:
     """Probe one provider/model with a tiny live request.
 
     Sends a one-word prompt capped at a few output tokens, so this exercises
     credentials, network access and model access at negligible cost.
 
-    :param service: Provider name, e.g. ``anthropic``.
-    :param model: Provider model name.
+    :param chat_model: Chat model to probe.
     :param timeout: Seconds before the probe is reported as failed.
-    :return: ``{"service", "model", "live", "latency_ms", "error"}``.
+    :return: The probe result.
     """
     import asyncio
     import time
@@ -187,7 +246,7 @@ async def check_model(service: str, model: str, timeout: float = 20.0) -> dict[s
             model_request(
                 # Building can block (Bedrock validates AWS credentials over
                 # the network), so keep it off the event loop.
-                await asyncio.to_thread(build_model, service, model),
+                await asyncio.to_thread(build_model, *chat_model),
                 [ModelRequest.user_text_prompt("ping")],
                 model_settings=ModelSettings(max_tokens=16, timeout=timeout),
             ),
@@ -196,33 +255,31 @@ async def check_model(service: str, model: str, timeout: float = 20.0) -> dict[s
     except asyncio.TimeoutError:
         error = f"timed out after {timeout:g}s"
     except Exception as e:
-        error = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
-    return {
-        "service": service,
-        "model": model,
-        "live": error is None,
-        "latency_ms": round((time.perf_counter() - start) * 1000),
-        "error": error,
-    }
+        error = first_line(e)
+    return ModelStatus.of(
+        chat_model,
+        live=error is None,
+        error=error,
+        latency_ms=round((time.perf_counter() - start) * 1000),
+    )
 
 
-async def check_models() -> list[dict[str, Any]]:
+async def check_models() -> list[ModelStatus]:
     """Probe each provider's default model concurrently.
 
     :return: One ``check_model`` result per provider, in config order.
     """
     import asyncio
 
-    services = dict.fromkeys(o["service"] for o in chat_model_options())
-    pairs = [resolve_chat_model(service) for service in services]
-    return list(await asyncio.gather(*(check_model(s, m) for s, m in pairs)))
+    services = dict.fromkeys(p.service for p in chat_model_options())
+    chat_models = [resolve_chat_model(service) for service in services]
+    return list(await asyncio.gather(*(check_model(m) for m in chat_models)))
 
 
 def build_embedding_model(service: str, model: str):
     """Return a Pydantic AI embedding model for the requested service.
 
-    Mirrors ``build_model``: provider packages are imported lazily, and each
-    service gets the same credentials or base URL as its chat model.
+    Uses the same ``build_provider`` as the chat models.
 
     :param service: One of ``openai``, ``ollama``, ``bedrock``.
     :param model: Provider embedding model name.
@@ -231,36 +288,18 @@ def build_embedding_model(service: str, model: str):
     :raises ValueError: If the service is unknown or its credentials are missing.
     """
     Model: Any
-    Provider: Any
-    kwargs: dict[str, Any]
-    if service == "openai":
-        from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel as Model
-        from pydantic_ai.providers.openai import OpenAIProvider as Provider
-
-        kwargs = {"api_key": require_env("OPENAI_API_KEY")}
-    elif service == "ollama":
+    if service in ("openai", "ollama"):
         # Ollama serves an OpenAI-compatible embeddings endpoint.
         from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel as Model
-        from pydantic_ai.providers.ollama import OllamaProvider as Provider
-
-        kwargs = {"base_url": os.getenv("OLLAMA_BASE_URL", OLLAMA_DEFAULT_BASE_URL)}
     elif service == "bedrock":
         from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel as Model
-        from pydantic_ai.providers.bedrock import BedrockProvider as Provider
-
-        kwargs = get_aws_config()
     elif service in ("anthropic", "groq"):
         raise NotImplementedError(
             f"{service} does not support text embeddings. Use openai, ollama, or bedrock."
         )
     else:
         raise ValueError(f"Unknown embedding service: {service}")
-    provider = Provider(**kwargs)
-    if service == "bedrock":
-        provider.client.meta.events.register(
-            "after-call.bedrock-runtime", _log_bedrock_request
-        )
-    return Model(model, provider=provider)
+    return Model(model, provider=build_provider(service))
 
 
 async def embed(service: str, model: str, text: str) -> list[float]:
@@ -324,8 +363,15 @@ def _expired_sso_message(home: Path, profile_name: str) -> str | None:
     )
     # botocore names the SSO token cache file after the SHA1 of the cache key.
     # This must match botocore exactly; it is a filename, not a security use.
-    cache_file = home / ".aws" / "sso" / "cache" / (
-        hashlib.sha1(cache_key.encode("utf-8"), usedforsecurity=False).hexdigest() + ".json"
+    cache_file = (
+        home
+        / ".aws"
+        / "sso"
+        / "cache"
+        / (
+            hashlib.sha1(cache_key.encode("utf-8"), usedforsecurity=False).hexdigest()
+            + ".json"
+        )
     )
     if not cache_file.exists():
         return hint

@@ -1,8 +1,8 @@
 """FastAPI server for the agent.
 
 Routes: ``/`` serves the chat UI (``index.html``), ``/config`` reports the
-selectable provider/model pairs and their status, ``POST /agent/activate``
-builds and checks a pair as soon as the UI picks it, and ``POST /agent/chat``
+selectable chat models and their status, ``POST /agent/activate``
+builds and checks a model as soon as the UI picks it, and ``POST /agent/chat``
 is the chat endpoint. Chat speaks Pydantic AI natively: request and response
 bodies are ``ModelMessage`` JSON arrays. There is no flat-dict translation
 layer.
@@ -13,11 +13,9 @@ import logging
 import os
 import time
 import webbrowser
-from collections import OrderedDict
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -36,11 +34,14 @@ from pydantic_ai.messages import (
 
 from agentseed.logger import setup_logging
 from agentseed.providers import (
+    ModelStatus,
+    ModelRef,
     UnknownModelError,
     build_model,
     chat_model_options,
     check_model,
     check_models,
+    first_line,
     resolve_chat_model,
 )
 
@@ -92,93 +93,32 @@ ACTIVATE_TTL_S = env_number("ACTIVATE_TTL_S", 300)
 # Maximum number of non-startup agents kept built at once.
 AGENT_CACHE_SIZE = env_number("AGENT_CACHE_SIZE", 8, cast=int)
 
-Key = tuple[str, str]
 
-
-def build_agent(service: str, model: str) -> Agent:
+def build_agent(chat_model: ModelRef) -> Agent:
     """Build the app agent with its model and server-owned instructions.
 
-    :param service: Provider name, already resolved by ``resolve_chat_model``.
-    :param model: Model name, already resolved by ``resolve_chat_model``.
+    :param chat_model: Chat model, already resolved by ``resolve_chat_model``.
     :return: Configured ``Agent``.
     """
-    logger.info(f"Initializing agent on '{model_label(service, model)}'")
-    return Agent(build_model(service, model), instructions=INSTRUCTIONS)
-
-
-class AgentCache:
-    """Least-recently-used cache of built agents keyed by ``(service, model)``."""
-
-    def __init__(self, maxsize: int = AGENT_CACHE_SIZE) -> None:
-        """Create an empty cache.
-
-        :param maxsize: Maximum number of agents kept; at least 1.
-        """
-        self.maxsize = max(1, maxsize)
-        self._agents: OrderedDict[Key, Agent] = OrderedDict()
-
-    def get(self, key: Key) -> Agent | None:
-        """Return the cached agent and mark it most recently used.
-
-        :param key: ``(service, model)`` pair.
-        :return: The agent, or None if not cached.
-        """
-        agent = self._agents.get(key)
-        if agent is not None:
-            self._agents.move_to_end(key)
-        return agent
-
-    def put(self, key: Key, agent: Agent) -> None:
-        """Store an agent, dropping the least recently used one when full.
-
-        :param key: ``(service, model)`` pair.
-        :param agent: Agent to cache.
-        """
-        self._agents[key] = agent
-        self._agents.move_to_end(key)
-        while len(self._agents) > self.maxsize:
-            evicted, _ = self._agents.popitem(last=False)
-            logger.info(f"Evicted agent '{model_label(*evicted)}'")
-
-    def pop(self, key: Key) -> None:
-        """Remove an agent if present.
-
-        :param key: ``(service, model)`` pair.
-        """
-        self._agents.pop(key, None)
-
-    def __contains__(self, key: object) -> bool:
-        return key in self._agents
-
-    def __len__(self) -> int:
-        return len(self._agents)
-
-    def keys(self) -> list[Key]:
-        """Return cached keys, least recently used first."""
-        return list(self._agents)
+    logger.info(f"Initializing agent on '{chat_model}'")
+    return Agent(build_model(*chat_model), instructions=INSTRUCTIONS)
 
 
 @dataclass
-class Selection:
-    """The agent chosen for a request, with the pair it was built for."""
+class ResolvedAgent:
+    """The agent a request resolved to, with the model it was built for."""
 
     agent: Agent
-    service: str
-    model: str
+    chat_model: ModelRef
 
 
-def model_label(service: str, model: str) -> str:
-    """Return the ``service:model`` label used in metadata and the switch note."""
-    return f"{service}:{model}"
-
-
-def requested_pair(service: str | None, model: str | None) -> Key:
-    """Resolve query params to a configured pair, or reject the request.
+def requested_chat_model(service: str | None, model: str | None) -> ModelRef:
+    """Resolve query params to a configured chat model, or reject the request.
 
     :param service: Optional provider (query param).
     :param model: Optional model (query param).
-    :return: ``(service, model)`` from ``resolve_chat_model``.
-    :raises HTTPException: 400 for a pair not listed in models.json.
+    :return: The ``ModelRef`` from ``resolve_chat_model``.
+    :raises HTTPException: 400 for a chat_model not listed in models.json.
     """
     try:
         return resolve_chat_model(service, model)
@@ -186,46 +126,25 @@ def requested_pair(service: str | None, model: str | None) -> Key:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
-def first_line(e: BaseException) -> str:
-    """Return a one-line error message for status records."""
-    text = str(e).strip()
-    return text.splitlines()[0] if text else type(e).__name__
-
-
-def record_status(
-    state: Any,
-    service: str,
-    model: str,
-    live: bool,
-    error: str | None,
-    latency_ms: int | None = None,
-) -> dict[str, Any]:
-    """Save the latest status for a pair on ``state.model_status``.
+def record_status(state: Any, status: ModelStatus) -> ModelStatus:
+    """Save the latest status for a model on ``state.model_status``.
 
     A missing ``latency_ms`` keeps the previously recorded latency.
 
     :return: The saved status record.
     """
-    previous = state.model_status.get((service, model), {})
-    status = {
-        "service": service,
-        "model": model,
-        "live": live,
-        "latency_ms": latency_ms if latency_ms is not None else previous.get("latency_ms"),
-        "error": error,
-        "checked_at": datetime.now(UTC).isoformat(),
-    }
-    state.model_status[(service, model)] = status
+    previous = state.model_status.get(status.chat_model)
+    if status.latency_ms is None and previous is not None:
+        status = status.model_copy(update={"latency_ms": previous.latency_ms})
+    state.model_status[status.chat_model] = status
     return status
 
 
-def is_fresh(status: dict[str, Any] | None) -> bool:
-    """Return True for a live status checked within ``ACTIVATE_TTL_S``."""
-    if not status or not status.get("live"):
-        return False
-    checked_at = datetime.fromisoformat(status["checked_at"])
-    age = (datetime.now(UTC) - checked_at).total_seconds()
-    return age < ACTIVATE_TTL_S
+def record_failure(state: Any, chat_model: ModelRef, e: BaseException) -> ModelStatus:
+    """Record a model as not live because of ``e``."""
+    return record_status(
+        state, ModelStatus.of(chat_model, live=False, error=first_line(e))
+    )
 
 
 def previous_model(history: Sequence[ModelMessage]) -> str | None:
@@ -245,7 +164,7 @@ def previous_model(history: Sequence[ModelMessage]) -> str | None:
             return str(label)
         if message.model_name:
             if message.provider_name:
-                return model_label(message.provider_name, message.model_name)
+                return f"{message.provider_name}:{message.model_name}"
             return message.model_name
         return None
     return None
@@ -263,14 +182,16 @@ def init_state(app: FastAPI) -> None:
 
     :param app: FastAPI application instance.
     """
-    app.state.agent = None
-    app.state.agent_error = None
-    # The startup agent's pair: the first chat model in models.json.
-    app.state.default_pair = resolve_chat_model()
-    app.state.agents = AgentCache(AGENT_CACHE_SIZE)
+    # The startup agent's model: the first chat model in models.json.
+    app.state.default_chat_model = resolve_chat_model()
+    # Everything below is keyed by ModelRef.
+    # Built agents. The startup agent lives here under default_chat_model and is
+    # never evicted; the rest form an LRU cache (see ensure_agent).
+    app.state.agents = {}
+    # Latest ModelStatus per model, from probes, activations and chats.
     app.state.model_status = {}
+    # In-flight /agent/activate probes, so concurrent calls share one.
     app.state.activation_tasks = {}
-    app.state.provider_status = {}
 
 
 @asynccontextmanager
@@ -285,12 +206,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     setup_logging()
     init_state(app)
+    chat_model = app.state.default_chat_model
     try:
-        app.state.agent = await asyncio.to_thread(build_agent, *app.state.default_pair)
-        logger.info(f"Agent initialised on '{model_label(*app.state.default_pair)}'")
+        app.state.agents[chat_model] = await asyncio.to_thread(build_agent, chat_model)
+        logger.info(f"Agent initialised on '{chat_model}'")
     except Exception as e:
-        app.state.agent_error = str(e)
-        logger.warning(f"Agent unavailable: {app.state.agent_error}")
+        record_failure(app.state, chat_model, e)
+        logger.warning(f"Agent unavailable: {e}")
     # Probe providers in the background so a slow or dead provider never
     # delays startup; /config reports live=null for each until this finishes.
     probe = asyncio.create_task(probe_providers(app))
@@ -303,98 +225,92 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 async def probe_providers(app: FastAPI) -> None:
     """Probe each provider's default model and record results on ``app.state``.
 
-    :param app: FastAPI application whose ``provider_status`` and
-        ``model_status`` are updated.
+    :param app: FastAPI application whose ``model_status`` is updated.
     """
     try:
         results = await check_models()
     except Exception as e:
         logger.warning(f"Provider probe failed: {e}")
         return
-    app.state.provider_status = {r["service"]: r for r in results}
-    for r in results:
-        record_status(
-            app.state, r["service"], r["model"], r["live"], r["error"], r["latency_ms"]
-        )
-    live = [r["service"] for r in results if r["live"]]
+    for status in results:
+        record_status(app.state, status)
+    live = [status.service for status in results if status.live]
     logger.info(f"Live providers: {', '.join(live) or 'none'}")
 
 
-async def ensure_agent(state: Any, service: str, model: str) -> Agent:
-    """Return the built agent for a known pair, building it off the event loop.
+async def ensure_agent(state: Any, chat_model: ModelRef) -> Agent:
+    """Return the built agent for a known model, building it off the event loop.
 
-    The startup pair uses ``state.agent`` (rebuilt if startup failed); other
-    pairs go through the LRU ``state.agents`` cache.
+    All agents live in ``state.agents``. The startup model is rebuilt here if
+    startup failed and is never evicted; other models are an LRU cache capped at
+    ``AGENT_CACHE_SIZE``.
 
     :raises Exception: Whatever ``build_agent`` raises.
     """
-    key = (service, model)
-    if key == state.default_pair:
-        if state.agent is None:
-            state.agent = await asyncio.to_thread(build_agent, service, model)
-            state.agent_error = None
-        return state.agent
-    agent = state.agents.get(key)
+    # Plain dicts keep insertion order: re-inserting marks a key most recently
+    # used, so the earliest keys are the least recently used.
+    agent = state.agents.pop(chat_model, None)
     if agent is None:
-        agent = await asyncio.to_thread(build_agent, service, model)
-        state.agents.put(key, agent)
+        agent = await asyncio.to_thread(build_agent, chat_model)
+    state.agents[chat_model] = agent
+    others = [k for k in state.agents if k != state.default_chat_model]
+    for evicted in others[: max(0, len(others) - max(1, AGENT_CACHE_SIZE))]:
+        del state.agents[evicted]
+        logger.info(f"Evicted agent '{evicted}'")
     return agent
 
 
-async def activate_pair(state: Any, service: str, model: str) -> dict[str, Any]:
-    """Build the agent for a pair, probe the model, and record its status.
+async def activate_model(state: Any, chat_model: ModelRef) -> ModelStatus:
+    """Build the agent for a model, probe it, and record its status.
 
     :return: The status record.
     """
-    key = (service, model)
     try:
-        await ensure_agent(state, service, model)
+        await ensure_agent(state, chat_model)
     except Exception as e:
-        state.agents.pop(key)
-        logger.warning(f"Agent '{model_label(service, model)}' unavailable: {e}")
-        return record_status(state, service, model, False, first_line(e))
-    result = await check_model(service, model)
-    if not result["live"]:
-        state.agents.pop(key)  # never reuse an agent that failed its check
-    return record_status(
-        state, service, model, result["live"], result["error"], result["latency_ms"]
-    )
+        state.agents.pop(chat_model, None)
+        logger.warning(f"Agent '{chat_model}' unavailable: {e}")
+        return record_failure(state, chat_model, e)
+    status = await check_model(chat_model)
+    if not status.live and chat_model != state.default_chat_model:
+        state.agents.pop(chat_model, None)  # never reuse an agent that failed its check
+    return record_status(state, status)
 
 
 async def require_agent(
     request: Request, service: str | None = None, model: str | None = None
-) -> Selection:
+) -> ResolvedAgent:
     """Return the agent for the requested provider/model, or fail the request.
 
-    Missing params are filled in by ``resolve_chat_model``. The default pair
-    uses the startup agent; other pairs come from the LRU cache, built on first
-    use (or by ``/agent/activate``).
+    Missing params are filled in by ``resolve_chat_model``. All agents come
+    from ``state.agents``: the default model uses the startup agent; other models
+    are built on first use (or by ``/agent/activate``).
 
     :param request: Incoming request, used to reach ``app.state``.
     :param service: Optional provider override (query param).
     :param model: Optional model override (query param); defaults to the
         provider's first configured model.
-    :return: The agent and the pair it serves.
-    :raises HTTPException: 400 for an unknown pair, 503 when the agent cannot
+    :return: The agent and the model it serves.
+    :raises HTTPException: 400 for an unknown chat_model, 503 when the agent cannot
         be initialised.
     """
     state = request.app.state
-    service, model = requested_pair(service, model)
-    if (service, model) == state.default_pair and state.agent is None:
+    chat_model = requested_chat_model(service, model)
+    if chat_model == state.default_chat_model and chat_model not in state.agents:
         # Startup failed; don't retry on every chat (/agent/activate retries).
-        raise HTTPException(
-            status_code=503, detail=state.agent_error or "Agent not initialized"
-        )
+        status = state.model_status.get(chat_model)
+        detail = status.error if status and status.error else "Agent not initialized"
+        raise HTTPException(status_code=503, detail=detail)
     try:
-        agent = await ensure_agent(state, service, model)
+        agent = await ensure_agent(state, chat_model)
     except Exception as e:
-        logger.warning(f"Agent '{model_label(service, model)}' unavailable: {e}")
+        logger.warning(f"Agent '{chat_model}' unavailable: {e}")
         raise HTTPException(status_code=503, detail=str(e)) from e
-    return Selection(agent, service, model)
+    return ResolvedAgent(agent, chat_model)
 
 
 # Injected into routes that need the agent.
-SELECTED = Annotated[Selection, Depends(require_agent)]
+RESOLVED_AGENT = Annotated[ResolvedAgent, Depends(require_agent)]
 
 
 def create_app() -> FastAPI:
@@ -416,13 +332,13 @@ def create_app() -> FastAPI:
         service: str,
         model: str | None = None,
         force: bool = False,
-    ) -> dict[str, Any]:
-        """Build and probe a provider/model pair as soon as the UI picks it.
+    ) -> ModelStatus:
+        """Build and probe a chat model as soon as the UI picks it.
 
         A model that does not work is still a successful check: the response is
         200 with ``live: false`` and ``error`` set. A live result is reused for
         ``ACTIVATE_TTL_S`` seconds unless ``force`` is set; concurrent calls for
-        the same pair share one probe.
+        the same model share one probe.
 
         :param request: Incoming request, used to reach ``app.state``.
         :param service: Provider name.
@@ -431,45 +347,44 @@ def create_app() -> FastAPI:
         :return: Status record ``{service, model, live, latency_ms, error, checked_at}``.
         """
         state = request.app.state
-        service, model = requested_pair(service, model)
-        key = (service, model)
+        chat_model = requested_chat_model(service, model)
 
-        status = state.model_status.get(key)
-        if not force and is_fresh(status):
+        status = state.model_status.get(chat_model)
+        if not force and status and status.is_fresh(ACTIVATE_TTL_S):
             try:
-                await ensure_agent(state, service, model)  # rebuild if evicted
+                await ensure_agent(state, chat_model)  # rebuild if evicted
                 return status
             except Exception as e:
-                return record_status(state, service, model, False, first_line(e))
+                return record_failure(state, chat_model, e)
 
-        task = state.activation_tasks.get(key)
+        task = state.activation_tasks.get(chat_model)
         if task is None:
-            task = asyncio.create_task(activate_pair(state, service, model))
-            state.activation_tasks[key] = task
+            task = asyncio.create_task(activate_model(state, chat_model))
+            state.activation_tasks[chat_model] = task
 
             def forget(done: asyncio.Task) -> None:
-                if state.activation_tasks.get(key) is done:
-                    del state.activation_tasks[key]
+                if state.activation_tasks.get(chat_model) is done:
+                    del state.activation_tasks[chat_model]
 
             task.add_done_callback(forget)
         # Shield so one client disconnecting doesn't cancel a shared probe.
         return await asyncio.shield(task)
 
     @app.post("/agent/chat")
-    async def agent_chat(request: Request, selection: SELECTED) -> Response:
+    async def agent_chat(request: Request, resolved: RESOLVED_AGENT) -> Response:
         """Chat using native Pydantic AI message history.
 
         Request and response bodies are ``ModelMessage`` JSON arrays (the
         ``ModelMessagesTypeAdapter`` format). The last message is the new user
         turn; earlier messages are history. Optional ``service`` and
-        ``model`` query params select a provider/model pair from models.json.
+        ``model`` query params select a chat model from models.json.
 
         New replies are labelled with ``metadata.agentseed_model``. When the
         last reply came from a different model, ``SWITCH_NOTE`` is added to the
         instructions for this run.
 
         :param request: Incoming request carrying the raw message history.
-        :param selection: Injected agent and the pair it serves.
+        :param resolved: Injected agent and the model it serves.
         :return: The full updated message history as JSON.
         """
         try:
@@ -484,8 +399,8 @@ def create_app() -> FastAPI:
         history = sanitize_messages(history)
 
         state = request.app.state
-        service, model = selection.service, selection.model
-        current = model_label(service, model)
+        chat_model = resolved.chat_model
+        current = str(chat_model)
         previous = previous_model(history)
         instructions = (
             SWITCH_NOTE.format(previous=previous, current=current)
@@ -495,14 +410,14 @@ def create_app() -> FastAPI:
         if instructions:
             logger.info(f"Model switched from '{previous}' to '{current}'")
         try:
-            result = await selection.agent.run(
+            result = await resolved.agent.run(
                 message_history=history, instructions=instructions
             )
         except Exception as e:
             logger.error(f"Agent error: {e}")
-            record_status(state, service, model, False, first_line(e))
+            record_failure(state, chat_model, e)
             raise HTTPException(status_code=500, detail=str(e)) from e
-        record_status(state, service, model, True, None)
+        record_status(state, ModelStatus.of(chat_model, live=True))
 
         messages = result.all_messages()
         label_responses(messages[len(history) :], current)
@@ -540,26 +455,29 @@ def create_app() -> FastAPI:
         default model rather than measured for this exact model.
         """
         state = request.app.state
+        default = state.default_chat_model
         models = []
-        for option in chat_model_options():
-            status = state.model_status.get((option["service"], option["model"]))
+        for chat_model in chat_model_options():
+            status = state.model_status.get(chat_model)
             checked = status is not None
             if status is None:
-                status = state.provider_status.get(option["service"])
+                # Borrow the provider's default model status until this one is checked.
+                status = state.model_status.get(resolve_chat_model(chat_model.service))
             models.append(
                 {
-                    **option,
-                    "live": status["live"] if status else None,
-                    "error": status["error"] if status else None,
-                    "latency_ms": status.get("latency_ms") if checked else None,
+                    **chat_model._asdict(),
+                    "live": status.live if status else None,
+                    "error": status.error if status else None,
+                    "latency_ms": status.latency_ms if checked else None,
                     "checked": checked,
                 }
             )
+        default_status = state.model_status.get(default)
+        available = default in state.agents
         return {
-            "service": state.default_pair[0],
-            "available": state.agent is not None,
-            "error": state.agent_error,
-            "model": state.default_pair[1],
+            **default._asdict(),
+            "available": available,
+            "error": None if available or not default_status else default_status.error,
             "models": models,
         }
 
