@@ -277,32 +277,26 @@ async def activate_model(state: Any, chat_model: ModelRef) -> ModelStatus:
     return record_status(state, status)
 
 
-async def require_agent(
+async def resolve_agent(
     request: Request, service: str | None = None, model: str | None = None
 ) -> ResolvedAgent:
-    """Return the agent for the requested provider/model, or fail the request.
+    """Resolve query params to a built agent, or fail the request.
 
-    Missing params are filled in by ``resolve_chat_model``. All agents come
-    from ``state.agents``: the default model uses the startup agent; other models
-    are built on first use (or by ``/agent/activate``).
+    The HTTP wrapper around ``ensure_agent``: missing params are filled in by
+    ``resolve_chat_model`` and the agent is built if it isn't cached yet
+    (including a startup agent whose first build failed).
 
     :param request: Incoming request, used to reach ``app.state``.
     :param service: Optional provider override (query param).
     :param model: Optional model override (query param); defaults to the
         provider's first configured model.
     :return: The agent and the model it serves.
-    :raises HTTPException: 400 for an unknown chat_model, 503 when the agent cannot
-        be initialised.
+    :raises HTTPException: 400 for an unknown model, 503 when the agent cannot
+        be built.
     """
-    state = request.app.state
     chat_model = requested_chat_model(service, model)
-    if chat_model == state.default_chat_model and chat_model not in state.agents:
-        # Startup failed; don't retry on every chat (/agent/activate retries).
-        status = state.model_status.get(chat_model)
-        detail = status.error if status and status.error else "Agent not initialized"
-        raise HTTPException(status_code=503, detail=detail)
     try:
-        agent = await ensure_agent(state, chat_model)
+        agent = await ensure_agent(request.app.state, chat_model)
     except Exception as e:
         logger.warning(f"Agent '{chat_model}' unavailable: {e}")
         raise HTTPException(status_code=503, detail=str(e)) from e
@@ -310,7 +304,7 @@ async def require_agent(
 
 
 # Injected into routes that need the agent.
-RESOLVED_AGENT = Annotated[ResolvedAgent, Depends(require_agent)]
+RESOLVED_AGENT = Annotated[ResolvedAgent, Depends(resolve_agent)]
 
 
 def create_app() -> FastAPI:
