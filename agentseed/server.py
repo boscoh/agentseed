@@ -65,6 +65,8 @@ SWITCH_NOTE = (
 
 # ModelResponse.metadata key recording which "service:model" wrote a reply.
 MODEL_LABEL_KEY = "agentseed_model"
+# ModelResponse.metadata key holding the reply's price in USD (null if unknown).
+COST_KEY = "agentseed_cost_usd"
 
 logger = logging.getLogger(__name__)
 
@@ -170,11 +172,27 @@ def previous_model(history: Sequence[ModelMessage]) -> str | None:
     return None
 
 
+def response_cost(message: ModelResponse) -> float | None:
+    """Price one reply in USD from its token usage, via genai-prices.
+
+    :param message: A model reply carrying ``usage``, ``model_name`` and ``provider_name``.
+    :return: Total price in USD, or None when the model has no known pricing (e.g. Ollama).
+    """
+    try:
+        return float(message.cost().total_price)
+    except Exception:  # LookupError for unpriced models, anything else is not fatal
+        return None
+
+
 def label_responses(messages: Sequence[ModelMessage], label: str) -> None:
-    """Record which model wrote each reply in ``ModelResponse.metadata``."""
+    """Record which model wrote each reply, and what it cost, in ``ModelResponse.metadata``."""
     for message in messages:
         if isinstance(message, ModelResponse):
-            message.metadata = {**(message.metadata or {}), MODEL_LABEL_KEY: label}
+            message.metadata = {
+                **(message.metadata or {}),
+                MODEL_LABEL_KEY: label,
+                COST_KEY: response_cost(message),
+            }
 
 
 def init_state(app: FastAPI) -> None:

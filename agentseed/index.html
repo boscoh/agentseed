@@ -1,3 +1,4 @@
+<!doctype html>
 <head>
   <!-- avoid text rendering issues on various platforms -->
   <meta charset="utf-8" />
@@ -8,10 +9,10 @@
 
   <!-- Bootstrap -->
   <link
-    href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.1/dist/css/bootstrap.min.css"
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
     rel="stylesheet"
   />
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.1/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
   <!-- Font Awesome -->
   <link
@@ -45,297 +46,27 @@
       display: none;
     }
 
-    /* Allow long text to wrap and scroll */
-    pre {
-      white-space: pre-wrap; /* Preserve whitespace but allow wrapping */
-      word-wrap: break-word; /* Break long words to fit container */
-      overflow-x: auto; /* Adds horizontal scroll if needed */
-    }
-
-    /* Smooth scrolling for all scrollable elements */
-    html {
-      scroll-behavior: smooth;
-    }
-
-    /* Smooth scrolling for the chat container */
-    .flex-grow-1.overflow-auto {
-      scroll-behavior: smooth;
-      transition: scroll-behavior 0.3s ease-in-out;
-    }
-
-    .messages-container {
-      display: flex;
-      flex-direction: column;
-      justify-content: flex-end;
-      min-height: 100%;
-    }
-
-    /* Message entry animation */
-    .message {
-      opacity: 0;
-      animation: fadeIn 0.3s ease-out forwards;
-    }
-
-    @keyframes fadeIn {
-      from {
-        opacity: 0;
-        transform: translateY(10px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    /* Add staggered delay for messages */
-    .message {
-      animation-delay: 0.1s;
-    }
-    @keyframes fadeInOut {
-      0%,
-      100% {
-        opacity: 0.2;
-      }
-      50% {
-        opacity: 1;
-      }
-    }
-    .thinking-dots span {
-      animation: fadeInOut 1.5s infinite ease-in-out;
-      opacity: 0.2;
-    }
-    .thinking-dots span:nth-child(2) {
-      animation-delay: 0.3s;
-    }
-    .thinking-dots span:nth-child(3) {
-      animation-delay: 0.6s;
-    }
-
-    /* Whole app is capped in width and centered horizontally. */
-    #app-shell {
-      max-width: 560px;
-      width: 100%;
-      height: 100vh;
-      margin: 0 auto;
-      border-left: 1px solid #e5e5e7;
-      border-right: 1px solid #e5e5e7;
-    }
-
-    #main-column {
-      width: 100%;
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-      overflow: hidden;
-    }
-
-    html, body {
-      margin: 0;
-      padding: 0;
-      height: 100%;
-    }
-
-    body {
-      background-color: #f5f5f7;
-      font-family:
-        -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
-        Arial, sans-serif;
-    }
-
-    .message .card {
-      border: none;
-      border-radius: 18px;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    /* Chat bubbles: Bootstrap has no 85% max-width utility. */
+    .bubble {
       max-width: 85%;
-      word-wrap: break-word;
     }
 
-    .message .card-body {
-      padding: 12px 16px;
-    }
-
-    .message .card-text {
-      font-size: 15px;
-      line-height: 1.5;
-      margin: 0;
-    }
-
-    .message .card-text > *:first-child {
-      margin-top: 0 !important;
-    }
-
-    .message .card-text > *:last-child {
-      margin-bottom: 0 !important;
-    }
-
-    .message .card-text p {
+    /* Trim the outer margins of rendered markdown inside a bubble. */
+    .bubble .card-text > :first-child {
       margin-top: 0;
-      margin-bottom: 1em;
+    }
+    .bubble .card-text > :last-child {
+      margin-bottom: 0;
     }
 
-    .message .card.bg-info {
-      background-color: #007aff !important;
-      color: white;
-      margin-left: auto;
-    }
-
-    .message .card.bg-light {
-      background-color: #ffffff !important;
-      color: #1d1d1f;
-      margin-right: auto;
-      border: 1px solid #e5e5e7;
-    }
-
-    .message .card.border-danger {
-      background-color: #ff3b30 !important;
-      color: white;
-      border: none !important;
-    }
-
-    .message.mb-3 {
-      margin-bottom: 12px;
-    }
-
-    .messages-area {
-      flex: 1;
-      overflow-y: auto;
-      background-color: #ffffff;
-      padding: 20px 16px;
-    }
-
-    .form-control {
-      border-radius: 12px;
-      border: 1px solid #e5e5e7;
-      padding: 12px 16px;
-      font-size: 15px;
-      resize: none;
-      transition:
-        border-color 0.2s,
-        box-shadow 0.2s;
-    }
-
-    .form-control:focus {
-      border-color: #007aff;
-      box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
-      outline: none;
-    }
-
-    .form-control:disabled {
-      background-color: #f5f5f5;
-      opacity: 0.6;
-    }
-
-    button.btn {
-      border-radius: 12px;
-      padding: 10px 24px;
-      font-size: 15px;
-      font-weight: 500;
-      border: none;
-      transition: all 0.2s;
-      cursor: pointer;
-    }
-
-    button.btn.btn-info {
-      background-color: #007aff;
-      color: white;
-    }
-
-    button.btn.btn-info:hover:not(:disabled) {
-      background-color: #0051d5;
-      transform: translateY(-1px);
-      box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
-    }
-
-    button.btn.btn-info:active:not(:disabled) {
-      transform: translateY(0);
-      box-shadow: 0 1px 4px rgba(0, 122, 255, 0.2);
-    }
-
-    button.btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-      transform: none;
-    }
-
-    .input-container {
-      flex-shrink: 0;
-      background-color: #fafafa;
-      border-top: 1px solid #e5e5e7;
-      padding: 16px 0;
-    }
-
-    .header-section {
-      flex-shrink: 0;
-      background-color: #fafafa;
-      border-bottom: 1px solid #e5e5e7;
-      padding: 12px 16px;
-    }
-
-    h1 {
-      font-size: 24px;
-      font-weight: 700;
-      color: #1d1d1f;
-      margin: 0 0 4px 0;
-    }
-
-    .header-section p {
-      margin: 0;
-      font-size: 13px;
-    }
-    .model-select {
-      max-width: 100%;
-      margin: 6px auto 0;
-      font-size: 13px;
-      border-radius: 8px;
-      padding: 4px 8px;
-    }
-    .model-row {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      margin-top: 6px;
-    }
-    .model-row .model-select {
-      margin: 0;
-      width: auto;
-    }
-    .model-status {
-      font-size: 12px;
-      color: #6e6e73;
-      white-space: nowrap;
-    }
-    .model-status .dot {
-      display: inline-block;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      margin-right: 4px;
-      vertical-align: middle;
-    }
-    .model-status.ready .dot { background: #34c759; }
-    .model-status.failed .dot { background: #ff3b30; }
-    .model-status .spinner-border {
-      width: 10px;
-      height: 10px;
-      border-width: 2px;
-      margin-right: 4px;
-      vertical-align: middle;
-    }
-
-    .message .card.tool-card {
-      background-color: #f5f5f7 !important;
-      color: #6e6e73;
-      margin-right: auto;
-      max-width: 100%;
-      box-shadow: none;
-      border: 1px dashed #d2d2d7;
-    }
-
-    .message .card.tool-card .card-text {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 12px;
+    /* Keep newlines in plain-text bubbles (user input, tool calls). */
+    .pre-wrap {
       white-space: pre-wrap;
+    }
+
+    /* Per-reply token/cost line: smaller than Bootstrap's .small (0.875em). */
+    .stats {
+      font-size: 0.7rem;
     }
   </style>
 
@@ -346,18 +77,14 @@
   </script>
 </head>
 
-<body>
+<body class="bg-body-tertiary">
   <!-- Vue template: compiled in the browser by vue.global.js on mount. -->
   <div id="app" v-cloak>
-    <div id="app-shell" class="d-flex flex-column">
-      <div class="header-section text-center">
-        <h1>{{ title }}</h1>
-        <div v-if="config && config.models.length" class="model-row">
-          <select
-            v-model="selected"
-            :disabled="isLoading"
-            class="form-select form-select-sm model-select"
-          >
+    <div class="d-flex flex-column vh-100 mx-auto bg-body border-start border-end" style="max-width: 560px">
+      <header class="text-center bg-light border-bottom px-3 py-2">
+        <h1 class="h4 fw-bold mb-1">{{ title }}</h1>
+        <div v-if="config && config.models.length" class="d-flex align-items-center justify-content-center gap-2">
+          <select v-model="selected" :disabled="isLoading" class="form-select form-select-sm w-auto mw-100">
             <option
               v-for="o in config.models"
               :key="optionKey(o)"
@@ -366,76 +93,67 @@
               :title="o.error || ''"
             >{{ optionLabel(o) }}</option>
           </select>
-          <span
+          <small
             v-if="activation.state !== 'idle'"
-            class="model-status"
-            :class="activation.state"
+            class="text-secondary text-nowrap"
             :title="activation.error || (activation.latencyMs != null ? activation.latencyMs + ' ms' : '')"
           >
             <template v-if="activation.state === 'activating'">
-              <span class="spinner-border text-secondary"></span>connecting…
+              <span class="spinner-border spinner-border-sm me-1"></span>connecting…
             </template>
-            <template v-else-if="activation.state === 'ready'"><span class="dot"></span>ready</template>
-            <template v-else><span class="dot"></span>unavailable</template>
-          </span>
+            <template v-else-if="activation.state === 'ready'">
+              <span class="badge rounded-pill text-bg-success">ready</span>
+            </template>
+            <template v-else><span class="badge rounded-pill text-bg-danger">unavailable</span></template>
+          </small>
         </div>
-      </div>
+      </header>
 
-      <div id="main-column" ref="mainColumn" class="d-flex flex-column flex-grow-1">
-        <div class="messages-area">
-          <div class="px-3">
-            <div class="messages-container">
-              <div
-                v-for="(msg, index) in display"
-                :key="index"
-                class="message mb-3"
-                :class="'message-' + index"
-              >
-                <div class="card" :class="getMessageClass(msg.role)">
-                  <div class="card-body">
-                    <div
-                      v-if="msg.role === 'assistant'"
-                      class="card-text"
-                      v-html="renderMarkdown(msg.content)"
-                    ></div>
-                    <div v-else class="card-text">{{ msg.content }}</div>
-                  </div>
-                </div>
+      <main ref="mainColumn" class="messages-area flex-grow-1 overflow-auto d-flex flex-column p-3">
+        <!-- mt-auto pins short conversations to the bottom without breaking scrolling. -->
+        <div class="mt-auto">
+          <div v-for="(msg, index) in display" :key="index" class="mb-3">
+            <div class="card bubble rounded-4 shadow-sm" :class="getMessageClass(msg.role)">
+              <div class="card-body px-3 py-2">
+                <div v-if="msg.role === 'assistant'" class="card-text" v-html="renderMarkdown(msg.content)"></div>
+                <div v-else class="card-text pre-wrap">{{ msg.content }}</div>
               </div>
+            </div>
+            <div v-if="msg.stats" class="stats text-body-tertiary mt-1 ms-2 d-flex gap-2">
+              <span v-for="s in msg.stats" :key="s.icon">
+                <i class="fas me-1 opacity-50" :class="s.icon"></i>{{ s.text }}
+              </span>
+            </div>
+          </div>
 
-              <div v-if="isLoading" class="message mb-3">
-                <div class="card bg-light">
-                  <div class="card-body">
-                    <pre class="card-text text-muted"><span class="thinking-dots"><span>.</span><span>.</span><span>.</span></span></pre>
-                  </div>
-                </div>
+          <div v-if="isLoading" class="mb-3">
+            <div class="card bubble rounded-4 shadow-sm bg-light me-auto">
+              <div class="card-body px-3 py-2 text-secondary">
+                <span class="spinner-grow spinner-grow-sm me-1"></span>
+                <span class="spinner-grow spinner-grow-sm me-1"></span>
+                <span class="spinner-grow spinner-grow-sm"></span>
               </div>
             </div>
           </div>
         </div>
-      </div>
+      </main>
 
-      <div class="input-container position-relative">
-        <div style="padding: 0 16px;">
-          <div class="mb-2">
-            <textarea
-              v-model="userInput"
-              @keyup.enter.exact.prevent="sendMessage"
-              :disabled="isLoading"
-              class="form-control"
-              placeholder="Type your message here..."
-              rows="3"
-            ></textarea>
-          </div>
-          <div class="d-flex justify-content-between">
-            <button class="btn btn-outline-secondary" @click="confirmClearChat" :disabled="isLoading">Clear</button>
-            <button class="btn btn-info" @click="sendMessage" :disabled="isLoading || activating || !userInput.trim()">
-              <span v-if="!isLoading">Send</span>
-              <span v-if="isLoading">Sending...</span>
-            </button>
-          </div>
+      <footer class="bg-light border-top p-3">
+        <textarea
+          v-model="userInput"
+          @keyup.enter.exact.prevent="sendMessage"
+          :disabled="isLoading"
+          class="form-control mb-2"
+          placeholder="Type your message here..."
+          rows="3"
+        ></textarea>
+        <div class="d-flex justify-content-between">
+          <button class="btn btn-outline-secondary" @click="confirmClearChat" :disabled="isLoading">Clear</button>
+          <button class="btn btn-primary" @click="sendMessage" :disabled="isLoading || activating || !userInput.trim()">
+            {{ isLoading ? "Sending..." : "Send" }}
+          </button>
         </div>
-      </div>
+      </footer>
     </div>
   </div>
 </body>
@@ -464,10 +182,32 @@
   /** Part content as text: strings as-is, anything else (e.g. tool args) as JSON. */
   const asText = (c) => (typeof c === "string" ? c : c == null ? "" : JSON.stringify(c));
 
+  const fmtTokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
+  const fmtCost = (usd) => (usd < 0.01 ? `US$${usd.toFixed(4)}` : `US$${usd.toFixed(2)}`);
+
+  /** Usage items for a ModelResponse: [{icon, text}], rendered as icon + value. */
+  function responseStats(message) {
+    const u = message.usage || {};
+    const items = [
+      { icon: "fa-arrow-up", text: fmtTokens(u.input_tokens || 0) },
+      { icon: "fa-arrow-down", text: fmtTokens(u.output_tokens || 0) },
+    ];
+    if (u.cache_read_tokens) {
+      items.push({ icon: "fa-database", text: fmtTokens(u.cache_read_tokens) });
+    }
+    const cost = message.metadata?.agentseed_cost_usd;
+    items.push({
+      icon: "fa-coins",
+      text: cost == null ? "n/a" : fmtCost(cost),
+    });
+    return items;
+  }
+
   /** Flatten Pydantic AI ModelMessages into user/assistant/tool bubbles. */
   function toDisplay(history) {
     const out = [];
     for (const message of history) {
+      const start = out.length;
       for (const part of message.parts || []) {
         if (part.part_kind === "user-prompt") {
           out.push({ role: "user", content: asText(part.content) });
@@ -479,6 +219,8 @@
           out.push({ role: "tool", content: `← ${part.tool_name}: ${asText(part.content)}` });
         }
       }
+      // Show a reply's tokens and cost under the last bubble it produced.
+      if (message.kind === "response" && out.length > start) out[out.length - 1].stats = responseStats(message);
     }
     return out;
   }
@@ -664,14 +406,14 @@
       }
     }
 
-    const getMessageClass = (role) => {
-      return {
-        "ms-auto bg-info text-white": role === "user",
-        "me-auto bg-light": role === "assistant",
-        "tool-card": role === "tool",
-        "border-danger": role === "error",
-      };
+    // Bubble look per role, using Bootstrap utilities only.
+    const MESSAGE_CLASSES = {
+      user: "ms-auto text-bg-primary border-0",
+      assistant: "me-auto bg-light",
+      tool: "w-100 mw-100 bg-body-tertiary text-secondary font-monospace small shadow-none",
+      error: "me-auto text-bg-danger border-0",
     };
+    const getMessageClass = (role) => MESSAGE_CLASSES[role] || "";
 
     const confirmClearChat = () => {
       history.value = [];
