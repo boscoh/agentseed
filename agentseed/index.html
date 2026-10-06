@@ -141,7 +141,7 @@
               </div>
             </div>
             <div v-if="msg.stats" class="stats text-body-tertiary mt-1 ms-2 d-flex gap-2">
-              <span v-for="s in msg.stats" :key="s.icon">
+              <span v-for="s in msg.stats" :key="s.icon" :title="s.title">
                 <i class="fas me-1 opacity-50" :class="s.icon"></i>{{ s.text }}
               </span>
             </div>
@@ -205,6 +205,11 @@
     : s < 60 ? `${s.toFixed(1)}s`
     : `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, "0")}s`;
 
+  // Longest "service:model" label shown in a reply's stats line.
+  const MODEL_LABEL_MAX = 28;
+  /** Shorten text to max characters, with an ellipsis at the end. */
+  const truncate = (text, max) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+
   /** Usage items for a ModelResponse: [{icon, text}], rendered as icon + value. */
   function responseStats(message) {
     const u = message.usage || {};
@@ -223,6 +228,11 @@
     const elapsed = message.metadata?.agentseed_elapsed_s;
     if (elapsed != null) {
       items.push({ icon: "fa-stopwatch", text: fmtElapsed(elapsed) });
+    }
+    const label = message.metadata?.agentseed_model
+      || (message.model_name && [message.provider_name, message.model_name].filter(Boolean).join(":"));
+    if (label) {
+      items.push({ icon: "fa-robot", text: truncate(label, MODEL_LABEL_MAX), title: label });
     }
     return items;
   }
