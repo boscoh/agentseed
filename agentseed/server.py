@@ -67,6 +67,8 @@ SWITCH_NOTE = (
 MODEL_LABEL_KEY = "agentseed_model"
 # ModelResponse.metadata key holding the reply's price in USD (null if unknown).
 COST_KEY = "agentseed_cost_usd"
+# Final ModelResponse.metadata key holding seconds taken to process the user's message.
+ELAPSED_KEY = "agentseed_elapsed_s"
 
 logger = logging.getLogger(__name__)
 
@@ -184,15 +186,24 @@ def response_cost(message: ModelResponse) -> float | None:
         return None
 
 
-def label_responses(messages: Sequence[ModelMessage], label: str) -> None:
-    """Record which model wrote each reply, and what it cost, in ``ModelResponse.metadata``."""
-    for message in messages:
-        if isinstance(message, ModelResponse):
-            message.metadata = {
-                **(message.metadata or {}),
-                MODEL_LABEL_KEY: label,
-                COST_KEY: response_cost(message),
-            }
+def label_responses(
+    messages: Sequence[ModelMessage], label: str, elapsed_s: float | None = None
+) -> None:
+    """Record model, cost and processing time in each reply's ``ModelResponse.metadata``.
+
+    :param messages: Messages produced by this run.
+    :param label: ``service:model`` that wrote them.
+    :param elapsed_s: Wall-clock seconds for the whole run, stored on the final reply.
+    """
+    responses = [m for m in messages if isinstance(m, ModelResponse)]
+    for message in responses:
+        message.metadata = {
+            **(message.metadata or {}),
+            MODEL_LABEL_KEY: label,
+            COST_KEY: response_cost(message),
+        }
+    if responses and elapsed_s is not None:
+        responses[-1].metadata[ELAPSED_KEY] = round(elapsed_s, 3)
 
 
 def init_state(app: FastAPI) -> None:
@@ -421,6 +432,7 @@ def create_app() -> FastAPI:
         )
         if instructions:
             logger.info(f"Model switched from '{previous}' to '{current}'")
+        started = time.perf_counter()
         try:
             result = await resolved.agent.run(
                 message_history=history, instructions=instructions
@@ -429,10 +441,11 @@ def create_app() -> FastAPI:
             logger.error(f"Agent error: {e}")
             record_failure(state, chat_model, e)
             raise HTTPException(status_code=500, detail=str(e)) from e
+        elapsed_s = time.perf_counter() - started
         record_status(state, ModelStatus.of(chat_model, live=True))
 
         messages = result.all_messages()
-        label_responses(messages[len(history) :], current)
+        label_responses(messages[len(history) :], current, elapsed_s)
         return Response(
             ModelMessagesTypeAdapter.dump_json(messages),
             media_type="application/json",

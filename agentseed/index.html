@@ -199,6 +199,11 @@
 
   const fmtTokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
   const fmtCost = (usd) => (usd < 0.01 ? `US$${usd.toFixed(4)}` : `US$${usd.toFixed(2)}`);
+  /** Processing time in seconds, e.g. "850ms", "4.2s", "1m 05s". */
+  const fmtElapsed = (s) =>
+    s < 1 ? `${Math.round(s * 1000)}ms`
+    : s < 60 ? `${s.toFixed(1)}s`
+    : `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, "0")}s`;
 
   /** Usage items for a ModelResponse: [{icon, text}], rendered as icon + value. */
   function responseStats(message) {
@@ -215,6 +220,10 @@
       icon: "fa-coins",
       text: cost == null ? "n/a" : fmtCost(cost),
     });
+    const elapsed = message.metadata?.agentseed_elapsed_s;
+    if (elapsed != null) {
+      items.push({ icon: "fa-stopwatch", text: fmtElapsed(elapsed) });
+    }
     return items;
   }
 
