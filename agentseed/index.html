@@ -68,6 +68,27 @@
     .stats {
       font-size: 0.7rem;
     }
+
+    /* Subtle typing indicator: three small dots fading in sequence. */
+    .typing span {
+      display: inline-block;
+      width: 5px;
+      height: 5px;
+      margin-right: 4px;
+      border-radius: 50%;
+      background: currentColor;
+      opacity: 0.2;
+      animation: typing-fade 1.4s ease-in-out infinite;
+    }
+    .typing span:nth-child(2) { animation-delay: 0.2s; }
+    .typing span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes typing-fade {
+      0%, 80%, 100% { opacity: 0.2; }
+      40% { opacity: 0.7; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .typing span { animation: none; opacity: 0.4; }
+    }
   </style>
 
   <!-- Ky -->
@@ -126,14 +147,8 @@
             </div>
           </div>
 
-          <div v-if="isLoading" class="mb-3">
-            <div class="card bubble rounded-4 shadow-sm bg-light me-auto">
-              <div class="card-body px-3 py-2 text-secondary">
-                <span class="spinner-grow spinner-grow-sm me-1"></span>
-                <span class="spinner-grow spinner-grow-sm me-1"></span>
-                <span class="spinner-grow spinner-grow-sm"></span>
-              </div>
-            </div>
+          <div v-if="isLoading" class="typing text-body-tertiary mb-3 ms-3" aria-label="Assistant is typing">
+            <span></span><span></span><span></span>
           </div>
         </div>
       </main>
