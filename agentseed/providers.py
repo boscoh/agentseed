@@ -7,6 +7,7 @@ expired session.
 
 import configparser
 import hashlib
+import importlib
 import json
 import logging
 import os
@@ -37,21 +38,6 @@ def _log_bedrock_request(http_response, **_: Any) -> None:
     except ValueError:
         reason = ""
     logger.info(f'HTTP Request: POST {http_response.url} "HTTP/1.1 {status} {reason}"')
-
-
-@lru_cache
-def load_config() -> dict[str, Any]:
-    """Load and return the models configuration from models.json.
-
-    :return: Configuration dictionary with chat_models and embed_models.
-    """
-    config_path = Path(__file__).parent / "models.json"
-    try:
-        config = json.loads(config_path.read_text())
-    except (OSError, json.JSONDecodeError) as e:
-        raise ValueError(f"Could not load models config '{config_path}': {e}") from e
-    logger.info(f"Loaded selectable models from '{config_path}'")
-    return config
 
 
 class UnknownModelError(ValueError):
@@ -101,16 +87,24 @@ def first_line(e: BaseException) -> str:
     return text.splitlines()[0] if text else type(e).__name__
 
 
-def chat_model_options() -> list[ModelRef]:
+@lru_cache
+def chat_model_options() -> tuple[ModelRef, ...]:
     """Return every selectable chat model from models.json.
 
     :return: ``ModelRef`` per model, in config order.
+    :raises ValueError: If models.json cannot be read or parsed.
     """
-    options = []
-    for service, models in load_config().get("chat_models", {}).items():
-        for model in models if isinstance(models, list) else [models]:
-            options.append(ModelRef(service, model))
-    return options
+    config_path = Path(__file__).parent / "models.json"
+    try:
+        config = json.loads(config_path.read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        raise ValueError(f"Could not load models config '{config_path}': {e}") from e
+    logger.info(f"Loaded selectable models from '{config_path}'")
+    return tuple(
+        ModelRef(service, model)
+        for service, models in config.get("chat_models", {}).items()
+        for model in (models if isinstance(models, list) else [models])
+    )
 
 
 def resolve_chat_model(
@@ -198,6 +192,47 @@ def build_provider(service: str) -> Any:
     raise ValueError(f"Unknown provider: {service}")
 
 
+#: Service -> (module, class) for chat models. Imported lazily so a missing
+#: optional dependency only affects the service that needs it.
+_CHAT_MODELS: dict[str, tuple[str, str]] = {
+    "openai": ("pydantic_ai.models.openai", "OpenAIChatModel"),
+    "anthropic": ("pydantic_ai.models.anthropic", "AnthropicModel"),
+    "groq": ("pydantic_ai.models.groq", "GroqModel"),
+    "ollama": ("pydantic_ai.models.ollama", "OllamaModel"),
+    "bedrock": ("pydantic_ai.models.bedrock", "BedrockConverseModel"),
+}
+
+#: Service -> (module, class) for embedding models. Ollama serves an
+#: OpenAI-compatible embeddings endpoint.
+_EMBEDDING_MODELS: dict[str, tuple[str, str]] = {
+    "openai": ("pydantic_ai.embeddings.openai", "OpenAIEmbeddingModel"),
+    "ollama": ("pydantic_ai.embeddings.openai", "OpenAIEmbeddingModel"),
+    "bedrock": ("pydantic_ai.embeddings.bedrock", "BedrockEmbeddingModel"),
+}
+
+_UNSUPPORTED_EMBEDDING_SERVICES = ("anthropic", "groq")
+
+
+def _instantiate(
+    table: dict[str, tuple[str, str]], service: str, model: str, error: str
+) -> Any:
+    """Import the class registered for ``service`` and build it with its provider.
+
+    :param table: Service -> (module, class) registry.
+    :param service: Service name to look up.
+    :param model: Provider model name.
+    :param error: Message for the ``ValueError`` if the service is unknown.
+    :return: The model instance.
+    :raises ValueError: If the service is unknown or its credentials are missing.
+    """
+    try:
+        module, cls = table[service]
+    except KeyError:
+        raise ValueError(error) from None
+    Model = getattr(importlib.import_module(module), cls)
+    return Model(model, provider=build_provider(service))
+
+
 def build_model(service: str, model: str):
     """Return a Pydantic AI chat model for the requested service.
 
@@ -206,20 +241,9 @@ def build_model(service: str, model: str):
     :return: A Pydantic AI ``Model`` instance.
     :raises ValueError: If the service is unknown or its credentials are missing.
     """
-    Model: Any
-    if service == "openai":
-        from pydantic_ai.models.openai import OpenAIChatModel as Model
-    elif service == "anthropic":
-        from pydantic_ai.models.anthropic import AnthropicModel as Model
-    elif service == "groq":
-        from pydantic_ai.models.groq import GroqModel as Model
-    elif service == "ollama":
-        from pydantic_ai.models.ollama import OllamaModel as Model
-    elif service == "bedrock":
-        from pydantic_ai.models.bedrock import BedrockConverseModel as Model
-    else:
-        raise ValueError(f"Unknown chat client type: {service}")
-    return Model(model, provider=build_provider(service))
+    return _instantiate(
+        _CHAT_MODELS, service, model, f"Unknown chat client type: {service}"
+    )
 
 
 async def check_model(chat_model: ModelRef, timeout: float = 20.0) -> ModelStatus:
@@ -287,19 +311,13 @@ def build_embedding_model(service: str, model: str):
     :raises NotImplementedError: For services without embedding support.
     :raises ValueError: If the service is unknown or its credentials are missing.
     """
-    Model: Any
-    if service in ("openai", "ollama"):
-        # Ollama serves an OpenAI-compatible embeddings endpoint.
-        from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel as Model
-    elif service == "bedrock":
-        from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel as Model
-    elif service in ("anthropic", "groq"):
+    if service in _UNSUPPORTED_EMBEDDING_SERVICES:
         raise NotImplementedError(
             f"{service} does not support text embeddings. Use openai, ollama, or bedrock."
         )
-    else:
-        raise ValueError(f"Unknown embedding service: {service}")
-    return Model(model, provider=build_provider(service))
+    return _instantiate(
+        _EMBEDDING_MODELS, service, model, f"Unknown embedding service: {service}"
+    )
 
 
 async def embed(service: str, model: str, text: str) -> list[float]:
