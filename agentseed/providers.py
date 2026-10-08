@@ -20,7 +20,8 @@ from pydantic_ai.providers import infer_provider
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434/v1"
+_SERVICES = ("openai", "anthropic", "groq", "ollama", "bedrock")
+_UNSUPPORTED_EMBEDDING_SERVICES = ("anthropic", "groq")
 
 
 class UnknownModelError(ValueError):
@@ -132,6 +133,7 @@ def build_provider(service: str) -> Any:
     """
     if service == "ollama":
         from pydantic_ai.providers.ollama import OllamaProvider
+        OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434/v1"
 
         return OllamaProvider(
             base_url=os.getenv("OLLAMA_BASE_URL", OLLAMA_DEFAULT_BASE_URL)
@@ -146,11 +148,6 @@ def build_provider(service: str) -> Any:
         return infer_provider(service)
     except UserError as e:
         raise ValueError(str(e)) from e
-
-
-_SERVICES = ("openai", "anthropic", "groq", "ollama", "bedrock")
-
-_UNSUPPORTED_EMBEDDING_SERVICES = ("anthropic", "groq")
 
 
 def build_model(service: str, model: str):
