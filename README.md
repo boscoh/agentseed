@@ -54,7 +54,7 @@ Passing a profile straight to boto3 breaks one side or the other: a profile
 name that doesn't exist on the server raises `ProfileNotFound`, and an expired
 SSO token locally surfaces as an opaque `TokenRetrievalError`.
 
-`get_aws_config()` in `agentseed/providers.py` smooths this over and returns
+`get_aws_config()` in `agentseed/aws.py` smooths this over and returns
 kwargs for `BedrockProvider` / boto3:
 
 - If `AWS_PROFILE` is set and exists in `~/.aws/config` or `~/.aws/credentials`,
@@ -88,7 +88,8 @@ to the last working model.
 ## Layout
 
 - `agentseed/providers.py` — Pydantic AI model/embedding builders, the default
-  provider/model (first chat model in `models.json`), and `get_aws_config`
+  provider/model (first chat model in `models.json`)
+- `agentseed/aws.py` — AWS credential checks (`get_aws_config`) and the Bedrock provider
 - `agentseed/server.py` — FastAPI app (`/`, `/config`, `/agent/activate`, `/agent/chat`)
   and the Pydantic AI agent builder
 - `agentseed/cli.py` — `agentseed` server command (cyclopts + uvicorn)

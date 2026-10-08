@@ -1,43 +1,26 @@
 """Provider plumbing for the agent.
 
 Builds a Pydantic AI model or embedding model for each supported service and
-validates AWS credentials, including the friendly ``aws sso login`` hint for an
-expired session.
+delegates AWS and Bedrock setup to ``agentseed.aws``.
 """
 
-import configparser
-import hashlib
-import importlib
 import json
 import logging
 import os
-from datetime import UTC, datetime, timezone
-from functools import cache, lru_cache
-from http import HTTPStatus
+from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, NamedTuple
 
-import boto3
-from botocore.exceptions import TokenRetrievalError
 from pydantic import BaseModel, Field
+from pydantic_ai.embeddings import infer_embedding_model
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import infer_model
+from pydantic_ai.providers import infer_provider
 
 logger = logging.getLogger(__name__)
 
 OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434/v1"
-
-
-def _log_bedrock_request(http_response, **_: Any) -> None:
-    """Log a Bedrock call like httpx does for the HTTP-based providers.
-
-    botocore has no equivalent of httpx's ``HTTP Request: POST ...`` INFO line,
-    so this is hooked onto the client's ``after-call`` event.
-    """
-    status = http_response.status_code
-    try:
-        reason = HTTPStatus(status).phrase
-    except ValueError:
-        reason = ""
-    logger.info(f'HTTP Request: POST {http_response.url} "HTTP/1.1 {status} {reason}"')
 
 
 class UnknownModelError(ValueError):
@@ -136,45 +119,17 @@ def resolve_chat_model(
     return chat_model
 
 
-def require_env(name: str) -> str:
-    """Return an API key from the environment or raise a friendly error.
-
-    :param name: Environment variable name.
-    :return: The non-empty value.
-    :raises ValueError: If the variable is unset or empty.
-    """
-    value = os.getenv(name)
-    if not value:
-        raise ValueError(
-            f"{name} environment variable is not set. "
-            f"Please set {name} in your .env file or environment variables."
-        )
-    return value
-
-
 def build_provider(service: str) -> Any:
     """Return a Pydantic AI provider with this service's credentials or base URL.
 
-    Shared by ``build_model`` and ``build_embedding_model``. Provider packages
-    are imported lazily so a missing optional dependency only affects the
-    service that needs it.
+    Shared by ``build_model`` and ``build_embedding_model``. Pydantic AI reads
+    the standard env vars itself (``OPENAI_API_KEY`` and so on). Only Ollama
+    (default base URL) and Bedrock (AWS checks, logging) need custom setup.
 
     :param service: One of ``openai``, ``anthropic``, ``groq``, ``ollama``, ``bedrock``.
     :return: A configured provider instance.
     :raises ValueError: If the service is unknown or its credentials are missing.
     """
-    if service == "openai":
-        from pydantic_ai.providers.openai import OpenAIProvider
-
-        return OpenAIProvider(api_key=require_env("OPENAI_API_KEY"))
-    if service == "anthropic":
-        from pydantic_ai.providers.anthropic import AnthropicProvider
-
-        return AnthropicProvider(api_key=require_env("ANTHROPIC_API_KEY"))
-    if service == "groq":
-        from pydantic_ai.providers.groq import GroqProvider
-
-        return GroqProvider(api_key=require_env("GROQ_API_KEY"))
     if service == "ollama":
         from pydantic_ai.providers.ollama import OllamaProvider
 
@@ -182,55 +137,20 @@ def build_provider(service: str) -> Any:
             base_url=os.getenv("OLLAMA_BASE_URL", OLLAMA_DEFAULT_BASE_URL)
         )
     if service == "bedrock":
-        from pydantic_ai.providers.bedrock import BedrockProvider
+        from agentseed.aws import build_bedrock_provider
 
-        provider = BedrockProvider(**get_aws_config())
-        provider.client.meta.events.register(
-            "after-call.bedrock-runtime", _log_bedrock_request
-        )
-        return provider
-    raise ValueError(f"Unknown provider: {service}")
+        return build_bedrock_provider()
+    if service not in _SERVICES:
+        raise ValueError(f"Unknown provider: {service}")
+    try:
+        return infer_provider(service)
+    except UserError as e:
+        raise ValueError(str(e)) from e
 
 
-#: Service -> (module, class) for chat models. Imported lazily so a missing
-#: optional dependency only affects the service that needs it.
-_CHAT_MODELS: dict[str, tuple[str, str]] = {
-    "openai": ("pydantic_ai.models.openai", "OpenAIChatModel"),
-    "anthropic": ("pydantic_ai.models.anthropic", "AnthropicModel"),
-    "groq": ("pydantic_ai.models.groq", "GroqModel"),
-    "ollama": ("pydantic_ai.models.ollama", "OllamaModel"),
-    "bedrock": ("pydantic_ai.models.bedrock", "BedrockConverseModel"),
-}
-
-#: Service -> (module, class) for embedding models. Ollama serves an
-#: OpenAI-compatible embeddings endpoint.
-_EMBEDDING_MODELS: dict[str, tuple[str, str]] = {
-    "openai": ("pydantic_ai.embeddings.openai", "OpenAIEmbeddingModel"),
-    "ollama": ("pydantic_ai.embeddings.openai", "OpenAIEmbeddingModel"),
-    "bedrock": ("pydantic_ai.embeddings.bedrock", "BedrockEmbeddingModel"),
-}
+_SERVICES = ("openai", "anthropic", "groq", "ollama", "bedrock")
 
 _UNSUPPORTED_EMBEDDING_SERVICES = ("anthropic", "groq")
-
-
-def _instantiate(
-    table: dict[str, tuple[str, str]], service: str, model: str, error: str
-) -> Any:
-    """Import the class registered for ``service`` and build it with its provider.
-
-    :param table: Service -> (module, class) registry.
-    :param service: Service name to look up.
-    :param model: Provider model name.
-    :param error: Message for the ``ValueError`` if the service is unknown.
-    :return: The model instance.
-    :raises ValueError: If the service is unknown or its credentials are missing.
-    """
-    try:
-        module, cls = table[service]
-    except KeyError:
-        raise ValueError(error) from None
-    Model = getattr(importlib.import_module(module), cls)
-    return Model(model, provider=build_provider(service))
 
 
 def build_model(service: str, model: str):
@@ -241,9 +161,9 @@ def build_model(service: str, model: str):
     :return: A Pydantic AI ``Model`` instance.
     :raises ValueError: If the service is unknown or its credentials are missing.
     """
-    return _instantiate(
-        _CHAT_MODELS, service, model, f"Unknown chat client type: {service}"
-    )
+    if service not in _SERVICES:
+        raise ValueError(f"Unknown chat client type: {service}")
+    return infer_model(f"{service}:{model}", provider_factory=build_provider)
 
 
 async def check_model(chat_model: ModelRef, timeout: float = 20.0) -> ModelStatus:
@@ -315,9 +235,9 @@ def build_embedding_model(service: str, model: str):
         raise NotImplementedError(
             f"{service} does not support text embeddings. Use openai, ollama, or bedrock."
         )
-    return _instantiate(
-        _EMBEDDING_MODELS, service, model, f"Unknown embedding service: {service}"
-    )
+    if service not in _SERVICES:
+        raise ValueError(f"Unknown embedding service: {service}")
+    return infer_embedding_model(f"{service}:{model}", provider_factory=build_provider)
 
 
 async def embed(service: str, model: str, text: str) -> list[float]:
@@ -333,154 +253,3 @@ async def embed(service: str, model: str, text: str) -> list[float]:
     embedding_model = build_embedding_model(service, model)
     result = await embedding_model.embed(text, input_type="document")
     return list(result.embeddings[0])
-
-
-def _sso_cache_key_for_profile(home: Path, profile_name: str) -> str | None:
-    """Return the SSO cache key configured for a profile.
-
-    A profile is SSO-based when it sets ``sso_session`` or, for legacy configs,
-    ``sso_start_url``. Botocore keys the cached token by the session name when
-    present, otherwise by the start URL.
-
-    :param home: User home directory containing ``.aws/config``.
-    :param profile_name: Profile name, where ``default`` is the unnamed profile.
-    :return: Cache key string, or None if the profile is not SSO-based.
-    """
-    config_path = home / ".aws" / "config"
-    if not config_path.exists():
-        return None
-
-    cfg = configparser.ConfigParser()
-    cfg.read(config_path)
-    section = "default" if profile_name == "default" else f"profile {profile_name}"
-    if not cfg.has_section(section):
-        return None
-
-    session_name = cfg.get(section, "sso_session", fallback=None)
-    start_url = cfg.get(section, "sso_start_url", fallback=None)
-    return session_name or start_url
-
-
-def _expired_sso_message(home: Path, profile_name: str) -> str | None:
-    """Return a login hint when a profile's cached SSO token is missing or expired.
-
-    Checking the cache before calling AWS means an expired session produces the
-    ``aws sso login`` command instead of a raw botocore TokenRetrievalError.
-
-    :param home: User home directory containing the SSO token cache.
-    :param profile_name: Effective profile name (``default`` when unset).
-    :return: Message telling the user how to log in, or None if not applicable.
-    """
-    cache_key = _sso_cache_key_for_profile(home, profile_name)
-    if not cache_key:
-        return None
-
-    hint = (
-        f"AWS SSO session expired for profile '{profile_name}'. "
-        f"Run: aws sso login --profile {profile_name}"
-    )
-    # botocore names the SSO token cache file after the SHA1 of the cache key.
-    # This must match botocore exactly; it is a filename, not a security use.
-    cache_file = (
-        home
-        / ".aws"
-        / "sso"
-        / "cache"
-        / (
-            hashlib.sha1(cache_key.encode("utf-8"), usedforsecurity=False).hexdigest()
-            + ".json"
-        )
-    )
-    if not cache_file.exists():
-        return hint
-
-    try:
-        cache_data = json.loads(cache_file.read_text())
-        expires_at = datetime.fromisoformat(
-            cache_data["expiresAt"].replace("Z", "+00:00")
-        )
-    except (json.JSONDecodeError, ValueError, KeyError):
-        return None
-
-    return hint if expires_at < datetime.now(timezone.utc) else None
-
-
-@cache
-def get_aws_config() -> dict[str, Any]:
-    """Return AWS configuration dict for boto3 client initialization.
-
-    Searches for AWS profiles and credentials, validates them, and checks for
-    SSO token expiration. Uses ``AWS_PROFILE`` and ``AWS_REGION`` env vars if set.
-
-    :return: Dict with optional ``profile_name`` and ``region_name`` keys, suitable for unpacking into boto3 constructors.
-    :raises ValueError: On missing, incomplete, or expired credentials.
-    """
-    home = Path.home()
-    aws_config: dict[str, Any] = {}
-
-    # Discover available profiles from credentials and config files
-    available_profiles = set()
-    for aws_file in [home / ".aws" / "credentials", home / ".aws" / "config"]:
-        if aws_file.exists():
-            cfg = configparser.ConfigParser()
-            cfg.read(aws_file)
-            for section in cfg.sections():
-                if section.startswith("sso-session "):
-                    continue
-                name = section[8:] if section.startswith("profile ") else section
-                available_profiles.add(name)
-
-    # Use AWS_PROFILE if it exists, otherwise fall back to default credential chain
-    profile_name = os.getenv("AWS_PROFILE")
-    if profile_name:
-        if profile_name in available_profiles:
-            aws_config["profile_name"] = profile_name
-        else:
-            logger.info(
-                f"AWS profile '{profile_name}' not found, using default credential chain"
-            )
-            os.environ.pop("AWS_PROFILE", None)
-            profile_name = None
-
-    region = os.getenv("AWS_REGION")
-    if region:
-        aws_config["region_name"] = region
-
-    effective_profile = profile_name or "default"
-
-    # Detect a missing or expired SSO token before calling AWS so the user gets
-    # the login command rather than a raw botocore TokenRetrievalError.
-    sso_expired_msg = _expired_sso_message(home, effective_profile)
-    if sso_expired_msg:
-        raise ValueError(sso_expired_msg)
-
-    session = boto3.Session(**aws_config)
-
-    try:
-        credentials = session.get_credentials()
-
-        if not credentials:
-            hint = (
-                f"Available profiles: {', '.join(available_profiles)}\n"
-                if available_profiles
-                else ""
-            )
-            raise ValueError(
-                f"No AWS credentials found.\n{hint}"
-                "To configure: aws configure\n"
-                "Or set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY environment variables"
-            )
-
-        if not credentials.access_key or not credentials.secret_key:
-            raise ValueError(
-                "Incomplete AWS credentials (missing access key or secret key)"
-            )
-
-        session.client("sts").get_caller_identity()
-    except TokenRetrievalError as e:
-        raise ValueError(
-            f"AWS SSO session expired for profile '{effective_profile}'. "
-            f"Run: aws sso login --profile {effective_profile}"
-        ) from e
-
-    return aws_config

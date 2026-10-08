@@ -14,7 +14,7 @@ from rich.logging import RichHandler
 # SDKs that log through different HTTP clients: groq uses httpx, while openai
 # (also used for ollama) and anthropic use the httpx2 fork. Both are kept at
 # INFO so every provider logs one "HTTP Request: POST ..." line per call;
-# Bedrock (botocore) gets the same line from a hook in providers.py.
+# Bedrock (botocore) gets the same line from a hook in aws.py.
 LOGGER_LEVELS: dict[str, int] = {
     "__main__": logging.INFO,
     "boto3": logging.INFO,
