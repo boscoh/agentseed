@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """CLI for the agentseed server."""
 
+import logging
+import socket
 import threading
+import time
+import webbrowser
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlparse
 
 import cyclopts
 from cyclopts import Parameter
@@ -13,7 +18,34 @@ from agentseed.logger import setup_logging
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 app = cyclopts.App(help="agentseed: minimal agent server with pluggable LLM providers.")
+
+
+def open_browser_when_ready(url: str, timeout: float = 30.0) -> None:
+    """Open ``url`` in the browser once the server accepts connections.
+
+    If the server is not ready after ``timeout`` seconds, open the browser anyway.
+
+    :param url: Server URL to open.
+    :param timeout: Seconds to wait for the server.
+    """
+    parsed = urlparse(url)
+    deadline = time.monotonic() + timeout
+    ready = False
+    while not ready and time.monotonic() < deadline:
+        try:
+            socket.create_connection((parsed.hostname, parsed.port), timeout=1).close()
+            ready = True
+        except OSError:
+            time.sleep(0.25)
+    note = "" if ready else " (server not ready after timeout)"
+    logger.info(f"Opening {url} in browser{note}...")
+    try:
+        webbrowser.open(url)
+    except Exception as e:
+        logger.error(f"Could not open browser: {e}")
 
 
 @app.default
@@ -38,7 +70,7 @@ def serve(
     """
     import uvicorn
 
-    from agentseed.server import create_app, wait_and_open_browser
+    from agentseed.server import create_app
 
     setup_logging()
 
@@ -60,13 +92,10 @@ def serve(
         # Always use localhost for browser opening, regardless of bind host
         browser_host = "localhost" if host in ("0.0.0.0", "127.0.0.1", "localhost") else host
         base_url = f"{protocol}://{browser_host}:{port}"
-        # Poll the UI root until the server answers, then open it.
-        thread = threading.Thread(
-            target=wait_and_open_browser,
-            args=(base_url, base_url),
-            daemon=True,
-        )
-        thread.start()
+        # Wait for the server port to accept connections, then open the UI.
+        threading.Thread(
+            target=open_browser_when_ready, args=(base_url,), daemon=True
+        ).start()
 
     if reload:
         uvicorn.run(

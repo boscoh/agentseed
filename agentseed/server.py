@@ -12,14 +12,12 @@ import asyncio
 import logging
 import os
 import time
-import webbrowser
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
-import httpx
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
@@ -512,38 +510,6 @@ def create_app() -> FastAPI:
         return FileResponse(INDEX_HTML, media_type="text/html")
 
     return app
-
-
-def wait_and_open_browser(check_url: str, open_url: str) -> None:
-    """Poll check_url until ready, then open open_url in the browser.
-
-    :param check_url: URL to poll for readiness (expects HTTP 200).
-    :param open_url: URL to open in the browser once ready.
-    :return: None.
-    """
-    max_retries = 60
-    retry_count = 0
-
-    while retry_count < max_retries:
-        try:
-            # verify=False so the local readiness check also works with the
-            # self-signed certificates produced by --ssl.
-            response = httpx.get(check_url, timeout=1, verify=False)  # noqa: S501
-            if response.status_code == 200:
-                webbrowser.open(open_url)
-                logger.info(f"Opening {open_url} in browser...")
-                return
-        except httpx.HTTPError:
-            pass  # server not accepting connections yet; retry
-
-        time.sleep(0.5)
-        retry_count += 1
-
-    try:
-        webbrowser.open(open_url)
-        logger.info(f"Opening {open_url} in browser (timeout waiting for ready)...")
-    except Exception as e:
-        logger.error(f"Could not open browser: {e}")
 
 
 # module-level app instance used by uvicorn reload mode
