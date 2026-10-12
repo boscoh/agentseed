@@ -105,6 +105,11 @@ def _expired_sso_message(home: Path, profile_name: str) -> str | None:
     return hint if expires_at < datetime.now(timezone.utc) else None
 
 
+def has_aws_files() -> bool:
+    """Return True if ``~/.aws/credentials`` or ``~/.aws/config`` exists."""
+    return any((Path.home() / ".aws" / name).exists() for name in ("credentials", "config"))
+
+
 @cache
 def get_aws_config() -> dict[str, Any]:
     """Return AWS configuration dict for boto3 client initialization.

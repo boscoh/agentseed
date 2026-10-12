@@ -40,6 +40,7 @@ from agentseed.providers import (
     check_model,
     check_models,
     first_line,
+    is_configured,
     resolve_chat_model,
 )
 
@@ -209,7 +210,7 @@ def init_state(app: FastAPI) -> None:
 
     :param app: FastAPI application instance.
     """
-    # The startup agent's model: the first chat model in models.json.
+    # The startup agent's model: the first configured provider's first model.
     app.state.default_chat_model = resolve_chat_model()
     # Everything below is keyed by ModelRef.
     # Built agents. The startup agent lives here under default_chat_model and is
@@ -465,6 +466,7 @@ def create_app() -> FastAPI:
                     {
                         "service": "bedrock",
                         "model": "amazon.nova-pro-v1:0",
+                        "configured": true,
                         "live": true,
                         "error": null,
                         "latency_ms": 412,
@@ -473,6 +475,8 @@ def create_app() -> FastAPI:
                 ]
             }
 
+        ``configured`` is false when the provider has no credentials; its
+        ``live`` is then false with an explanatory ``error``.
         ``live`` is null while the startup probe for that provider is pending.
         ``checked`` is false when the status is borrowed from the provider's
         default model rather than measured for this exact model.
@@ -489,6 +493,7 @@ def create_app() -> FastAPI:
             models.append(
                 {
                     **chat_model._asdict(),
+                    "configured": is_configured(chat_model.service),
                     "live": status.live if status else None,
                     "error": status.error if status else None,
                     "latency_ms": status.latency_ms if checked else None,

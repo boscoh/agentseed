@@ -14,7 +14,7 @@ dependencies = [
     "httpx>=0.27.0",
     "cyclopts>=3.0.0",
     "python-dotenv>=1.0.0",
-    "pydantic-ai-slim[anthropic,openai,bedrock,groq]>=2.43.0",
+    "pydantic-ai-slim[anthropic,openai,bedrock,groq,google,mistral,xai]>=2.43.0",
     "boto3>=1.42.63",
     "rich>=13.0.0",
 ]

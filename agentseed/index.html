@@ -264,6 +264,7 @@
   /** Dropdown label, marking providers that are down or still being probed. */
   function optionLabel(o) {
     const label = `${o.service} / ${o.model}`;
+    if (o.configured === false) return `${label} (not configured)`;
     if (o.live === false) return `${label} (unavailable)`;
     if (o.live === null) return `${label} (checking...)`;
     return label;

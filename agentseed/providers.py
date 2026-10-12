@@ -1,10 +1,9 @@
 """Provider plumbing for the agent.
 
-Builds a Pydantic AI model or embedding model for each supported service and
+Builds a Pydantic AI chat model for each provider listed in ``models.json`` and
 delegates AWS and Bedrock setup to ``agentseed.aws``.
 """
 
-import json
 import logging
 import os
 from datetime import UTC, datetime
@@ -12,16 +11,36 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from pydantic import BaseModel, Field
-from pydantic_ai.embeddings import infer_embedding_model
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import infer_model
 from pydantic_ai.providers import infer_provider
 
 logger = logging.getLogger(__name__)
 
-_SERVICES = ("openai", "anthropic", "groq", "ollama", "bedrock")
-_UNSUPPORTED_EMBEDDING_SERVICES = ("anthropic", "groq")
+
+class ProviderSpec(BaseModel):
+    """One provider entry from models.json; the provider name is the dict key.
+
+    An unknown key or a wrong type raises ``ValidationError`` at load, so a bad
+    hand edit in models.json cannot pass in silence.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+    # one env var set means configured; empty means the provider needs no credentials
+    env: tuple[str, ...] = ()
+    base_url: str | None = None
+    # chat models; the first model is the default and probe model
+    models: tuple[str, ...] = Field(alias="chat")
+
+
+class ModelsConfig(BaseModel):
+    """The models.json document: provider name to provider entry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    providers: dict[str, ProviderSpec]
 
 
 class UnknownModelError(ValueError):
@@ -72,50 +91,87 @@ def first_line(e: BaseException) -> str:
 
 
 @lru_cache
-def chat_model_options() -> tuple[ModelRef, ...]:
-    """Return every selectable chat model from models.json.
+def providers() -> dict[str, ProviderSpec]:
+    """Return every provider listed in models.json, in file order.
 
-    :return: ``ModelRef`` per model, in config order.
-    :raises ValueError: If models.json cannot be read or parsed.
+    :return: ``ProviderSpec`` by provider name.
+    :raises ValueError: If models.json cannot be read or is malformed.
     """
     config_path = Path(__file__).parent / "models.json"
     try:
-        config = json.loads(config_path.read_text())
-    except (OSError, json.JSONDecodeError) as e:
+        config = ModelsConfig.model_validate_json(config_path.read_text())
+    except (OSError, ValidationError) as e:
         raise ValueError(f"Could not load models config '{config_path}': {e}") from e
-    logger.info(f"Loaded selectable models from '{config_path}'")
+    specs = dict(config.providers)
+    empty = [name for name, spec in specs.items() if not spec.models]
+    if empty:
+        raise ValueError(f"Providers with no chat models in '{config_path}': {empty}")
+    logger.info(f"Loaded {len(specs)} providers from '{config_path}'")
+    return specs
+
+
+def chat_model_options() -> tuple[ModelRef, ...]:
+    """Return every selectable chat model from models.json.
+
+    :return: ``ModelRef`` per model, in file order.
+    """
     return tuple(
-        ModelRef(service, model)
-        for service, models in config.get("chat_models", {}).items()
-        for model in (models if isinstance(models, list) else [models])
+        ModelRef(name, model)
+        for name, spec in providers().items()
+        for model in spec.models
     )
+
+
+def is_configured(service: str) -> bool:
+    """Return True if the provider's credentials look present.
+
+    A provider with no ``env`` entry (Ollama) needs no credentials. Bedrock
+    also counts AWS config files, because boto3 reads them without env vars.
+
+    :param service: Provider name from models.json.
+    """
+    spec = providers()[service]
+    if not spec.env or any(os.environ.get(var) for var in spec.env):
+        return True
+    if service == "bedrock":
+        from agentseed.aws import has_aws_files
+
+        return has_aws_files()
+    return False
+
+
+def not_configured_message(service: str) -> str:
+    """Return the error text for a provider with no credentials."""
+    return f"{service} is not configured: set {' or '.join(providers()[service].env)}"
 
 
 def resolve_chat_model(
     service: str | None = None, model: str | None = None
 ) -> ModelRef:
-    """Fill in defaults for a provider/model and check it is configured.
+    """Fill in defaults for a provider/model and check it is listed.
 
-    This is the one place chat defaults are decided, all from models.json order:
+    This is the one place chat defaults are decided:
 
-    - no service: the first provider listed (the server default);
+    - no service: the first configured provider in models.json, else the first
+      provider (so the failure shows in /config);
     - no model: that provider's first model.
 
     :param service: Provider name, or None for the default provider.
     :param model: Model name, or None for the provider's first model.
     :return: A ``ModelRef`` guaranteed to be listed in models.json.
-    :raises UnknownModelError: If the chat_model (or provider) is not configured.
+    :raises UnknownModelError: If the provider or model is not listed.
     """
-    chat_models = chat_model_options()
-    if not chat_models:
-        raise UnknownModelError("No chat models configured in models.json")
-    service = service or chat_models[0].service
+    specs = providers()
+    if service is None:
+        service = next((name for name in specs if is_configured(name)), None)
+        service = service or next(iter(specs))
+    spec = specs.get(service)
+    if spec is None:
+        raise UnknownModelError(f"unknown provider: {service}")
     if model is None:
-        model = next((m.model for m in chat_models if m.service == service), None)
-        if model is None:
-            raise UnknownModelError(f"unknown provider: {service}")
+        model = spec.models[0]
     chat_model = ModelRef(service, model)
-    if chat_model not in chat_models:
+    if model not in spec.models:
         raise UnknownModelError(f"unknown provider/model: {chat_model}")
     return chat_model
 
@@ -123,27 +179,27 @@ def resolve_chat_model(
 def build_provider(service: str) -> Any:
     """Return a Pydantic AI provider with this service's credentials or base URL.
 
-    Shared by ``build_model`` and ``build_embedding_model``. Pydantic AI reads
-    the standard env vars itself (``OPENAI_API_KEY`` and so on). Only Ollama
-    (default base URL) and Bedrock (AWS checks, logging) need custom setup.
+    Pydantic AI reads the standard env vars itself (``OPENAI_API_KEY`` and so
+    on). Only Ollama (base URL) and Bedrock (AWS checks, logging) need custom
+    setup.
 
-    :param service: One of ``openai``, ``anthropic``, ``groq``, ``ollama``, ``bedrock``.
+    :param service: A provider name from models.json.
     :return: A configured provider instance.
     :raises ValueError: If the service is unknown or its credentials are missing.
     """
+    spec = providers().get(service)
+    if spec is None:
+        raise ValueError(f"Unknown provider: {service}")
+    if not is_configured(service):
+        raise ValueError(not_configured_message(service))
     if service == "ollama":
         from pydantic_ai.providers.ollama import OllamaProvider
-        OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434/v1"
 
-        return OllamaProvider(
-            base_url=os.getenv("OLLAMA_BASE_URL", OLLAMA_DEFAULT_BASE_URL)
-        )
+        return OllamaProvider(base_url=os.getenv("OLLAMA_BASE_URL", spec.base_url))
     if service == "bedrock":
         from agentseed.aws import build_bedrock_provider
 
         return build_bedrock_provider()
-    if service not in _SERVICES:
-        raise ValueError(f"Unknown provider: {service}")
     try:
         return infer_provider(service)
     except UserError as e:
@@ -153,12 +209,12 @@ def build_provider(service: str) -> Any:
 def build_model(service: str, model: str):
     """Return a Pydantic AI chat model for the requested service.
 
-    :param service: One of ``openai``, ``anthropic``, ``groq``, ``ollama``, ``bedrock``.
+    :param service: A provider name from models.json.
     :param model: Provider model name.
     :return: A Pydantic AI ``Model`` instance.
     :raises ValueError: If the service is unknown or its credentials are missing.
     """
-    if service not in _SERVICES:
+    if service not in providers():
         raise ValueError(f"Unknown chat client type: {service}")
     return infer_model(f"{service}:{model}", provider_factory=build_provider)
 
@@ -206,47 +262,24 @@ async def check_model(chat_model: ModelRef, timeout: float = 20.0) -> ModelStatu
 
 
 async def check_models() -> list[ModelStatus]:
-    """Probe each provider's default model concurrently.
+    """Check each provider's default model, probing configured ones concurrently.
 
-    :return: One ``check_model`` result per provider, in config order.
+    A provider without credentials is reported as not live, without a probe.
+
+    :return: One status per provider, in file order.
     """
     import asyncio
 
-    services = dict.fromkeys(p.service for p in chat_model_options())
-    chat_models = [resolve_chat_model(service) for service in services]
-    return list(await asyncio.gather(*(check_model(m) for m in chat_models)))
-
-
-def build_embedding_model(service: str, model: str):
-    """Return a Pydantic AI embedding model for the requested service.
-
-    Uses the same ``build_provider`` as the chat models.
-
-    :param service: One of ``openai``, ``ollama``, ``bedrock``.
-    :param model: Provider embedding model name.
-    :return: A Pydantic AI ``EmbeddingModel`` instance.
-    :raises NotImplementedError: For services without embedding support.
-    :raises ValueError: If the service is unknown or its credentials are missing.
-    """
-    if service in _UNSUPPORTED_EMBEDDING_SERVICES:
-        raise NotImplementedError(
-            f"{service} does not support text embeddings. Use openai, ollama, or bedrock."
-        )
-    if service not in _SERVICES:
-        raise ValueError(f"Unknown embedding service: {service}")
-    return infer_embedding_model(f"{service}:{model}", provider_factory=build_provider)
-
-
-async def embed(service: str, model: str, text: str) -> list[float]:
-    """Embed text with the given service and model.
-
-    :param service: One of ``openai``, ``ollama``, ``bedrock``.
-    :param model: Provider embedding model name.
-    :param text: Text to embed.
-    :return: Embedding vector.
-    :raises NotImplementedError: For services without embedding support.
-    :raises ValueError: If the service is unknown or its credentials are missing.
-    """
-    embedding_model = build_embedding_model(service, model)
-    result = await embedding_model.embed(text, input_type="document")
-    return list(result.embeddings[0])
+    results: dict[str, ModelStatus] = {}
+    probes = []
+    for service in providers():
+        chat_model = resolve_chat_model(service)
+        if is_configured(service):
+            probes.append(check_model(chat_model))
+        else:
+            results[service] = ModelStatus.of(
+                chat_model, live=False, error=not_configured_message(service)
+            )
+    for status in await asyncio.gather(*probes):
+        results[status.service] = status
+    return [results[service] for service in providers()]

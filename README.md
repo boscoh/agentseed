@@ -18,13 +18,19 @@ Groq, Ollama) behind one async interface.
 ```bash
 uv sync
 
-# Configure a provider (the first entry in agentseed/models.json is the default)
+# Configure a provider. The default is the first configured provider in
+# agentseed/models.json (a provider counts as configured when one of its
+# "env" variables is set; Ollama needs none).
 export AWS_PROFILE=my-profile          # Bedrock (SSO)
 export AWS_REGION=ap-southeast-2       # Bedrock
 aws sso login --profile my-profile
 export OPENAI_API_KEY=sk-...           # OpenAI
 export ANTHROPIC_API_KEY=sk-ant-...    # Anthropic
 export GROQ_API_KEY=gsk_...            # Groq
+export GOOGLE_API_KEY=...              # Google (or GEMINI_API_KEY)
+export MISTRAL_API_KEY=...             # Mistral
+export DEEPSEEK_API_KEY=...            # DeepSeek
+export XAI_API_KEY=...                 # xAI
 
 uv run agentseed
 # http://localhost:8000
@@ -33,7 +39,7 @@ uv run agentseed
 ## Endpoints
 
 - `GET /` — chat UI (`agentseed/index.html`)
-- `GET /config` — default provider/model, availability, and all selectable `models` pairs with per-model `live`/`error`/`latency_ms`/`checked`
+- `GET /config` — default provider/model, availability, and all selectable `models` pairs with per-model `configured`/`live`/`error`/`latency_ms`/`checked` (a provider without credentials is listed with `configured: false`)
 - `POST /agent/activate?service=&model=[&force=true]` — build and probe a pair as soon as it's picked; returns 200 with `live: true|false` (cached for `ACTIVATE_TTL_S`, default 300s)
 - `POST /agent/chat[?service=&model=]` — native Pydantic AI message history (ModelMessage JSON arrays); optional query params pick a pair from `models.json`. Replies are labelled with `metadata.agentseed_model`; when the model changes, the new model is told for that turn that earlier replies came from another model.
 
@@ -87,12 +93,12 @@ to the last working model.
 
 ## Layout
 
-- `agentseed/providers.py` — Pydantic AI model/embedding builders, the default
-  provider/model (first chat model in `models.json`)
+- `agentseed/providers.py` — Pydantic AI model builders, provider credential check, and the
+  default provider/model (first configured provider in `models.json`)
 - `agentseed/aws.py` — AWS credential checks (`get_aws_config`) and the Bedrock provider
 - `agentseed/server.py` — FastAPI app (`/`, `/config`, `/agent/activate`, `/agent/chat`)
   and the Pydantic AI agent builder
 - `agentseed/cli.py` — `agentseed` server command (cyclopts + uvicorn)
 - `agentseed/logger.py` — Rich logging setup
-- `agentseed/models.json` — selectable chat and embedding models
+- `agentseed/models.json` — providers: credential `env` variables, optional `base_url`, and `chat` models (the first model of each provider is its default and probe model)
 - `agentseed/index.html` — single-file chat UI (Vue 3 + Bootstrap via CDN)

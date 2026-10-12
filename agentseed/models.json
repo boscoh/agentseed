@@ -1,36 +1,59 @@
 {
-  "chat_models": {
-    "bedrock": [
-      "qwen.qwen3-coder-480b-a35b-v1:0",
-      "openai.gpt-oss-120b-1:0",
-      "deepseek.v3.2",
-      "mistral.mistral-large-3-675b-instruct",
-      "moonshotai.kimi-k2.5",
-      "zai.glm-5",
-      "minimax.minimax-m2.5",
-      "global.xai.grok-4.6",
-      "amazon.nova-pro-v1:0",
-      "google.gemma-3-27b-it"
-    ],
-    "openai": ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna", "gpt-4.1", "gpt-4o"],
-    "anthropic": [
-      "claude-sonnet-5-5",
-      "claude-opus-5-5",
-      "claude-fable-5-1",
-      "claude-haiku-4-5",
-      "claude-sonnet-4-5",
-      "claude-opus-4-5"
-    ],
-    "ollama": ["llama3.2"],
-    "groq": [
-      "openai/gpt-oss-120b",
-      "openai/gpt-oss-20b",
-      "qwen/qwen3.8-27b"
-    ]
-  },
-  "embed_models": {
-    "openai": ["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"],
-    "ollama": ["nomic-embed-text", "mxbai-embed-large", "all-minilm"],
-    "bedrock": ["amazon.titan-embed-text-v2:0", "amazon.titan-embed-text-v1", "cohere.embed-english-v3", "cohere.embed-multilingual-v3"]
+  "providers": {
+    "bedrock": {
+      "env": ["AWS_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_BEARER_TOKEN_BEDROCK"],
+      "chat": [
+        "qwen.qwen3-coder-480b-a35b-v1:0",
+        "openai.gpt-oss-120b-1:0",
+        "deepseek.v3.2",
+        "mistral.mistral-large-3-675b-instruct",
+        "moonshotai.kimi-k2.5",
+        "zai.glm-5",
+        "minimax.minimax-m2.5",
+        "global.xai.grok-4.6",
+        "amazon.nova-pro-v1:0",
+        "google.gemma-3-27b-it"
+      ]
+    },
+    "openai": {
+      "env": ["OPENAI_API_KEY"],
+      "chat": ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna", "gpt-4.1", "gpt-4o"]
+    },
+    "anthropic": {
+      "env": ["ANTHROPIC_API_KEY"],
+      "chat": [
+        "claude-sonnet-5-5",
+        "claude-opus-5-5",
+        "claude-fable-5-1",
+        "claude-haiku-4-5",
+        "claude-sonnet-4-5",
+        "claude-opus-4-5"
+      ]
+    },
+    "google": {
+      "env": ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
+      "chat": ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"]
+    },
+    "mistral": {
+      "env": ["MISTRAL_API_KEY"],
+      "chat": ["ministral-3-8b-25-12", "mistral-large-latest"]
+    },
+    "deepseek": {
+      "env": ["DEEPSEEK_API_KEY"],
+      "chat": ["deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"]
+    },
+    "xai": {
+      "env": ["XAI_API_KEY"],
+      "chat": ["grok-4.3"]
+    },
+    "groq": {
+      "env": ["GROQ_API_KEY"],
+      "chat": ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]
+    },
+    "ollama": {
+      "env": [],
+      "base_url": "http://localhost:11434/v1",
+      "chat": ["llama3.2"]
+    }
   }
 }
