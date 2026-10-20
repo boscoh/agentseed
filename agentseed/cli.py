@@ -14,7 +14,7 @@ import cyclopts
 from cyclopts import Parameter
 from dotenv import load_dotenv
 
-from agentseed.logger import setup_logging
+from agentseed.logger import log_kv, setup_logging
 
 load_dotenv()
 
@@ -40,12 +40,16 @@ def open_browser_when_ready(url: str, timeout: float = 30.0) -> None:
             ready = True
         except OSError:
             time.sleep(0.25)
-    note = "" if ready else " (server not ready after timeout)"
-    logger.info(f"Opening {url} in browser{note}...")
+    log_kv(
+        logger.info,
+        "browser open",
+        url=url,
+        server="ready" if ready else "not ready",
+    )
     try:
         webbrowser.open(url)
     except Exception as e:
-        logger.error(f"Could not open browser: {e}")
+        log_kv(logger.error, "browser failed", error=e)
 
 
 @app.default

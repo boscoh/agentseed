@@ -99,6 +99,8 @@ to the last working model.
 - `agentseed/server.py` — FastAPI app (`/`, `/config`, `/agent/activate`, `/agent/chat`)
   and the Pydantic AI agent builder
 - `agentseed/cli.py` — `agentseed` server command (cyclopts + uvicorn)
-- `agentseed/logger.py` — Rich logging setup
+- `agentseed/logger.py` — Rich logging setup and `log_kv`, which prints an event
+  name and then one aligned `key  value` line per field. The HTTP request lines
+  from httpx and the uvicorn access log get the same form
 - `agentseed/models.json` — providers: credential `env` variables, optional `base_url`, and `chat` models (the first model of each provider is its default and probe model)
 - `agentseed/index.html` — single-file chat UI (Vue 3 + Bootstrap via CDN)

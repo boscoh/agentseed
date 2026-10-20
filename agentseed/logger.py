@@ -3,18 +3,30 @@
 Rich formatting is installed on the root logger. Library loggers get a level,
 and any handlers they installed (e.g. by uvicorn) are dropped so their records
 propagate to the root Rich handler instead.
+
+Application code logs through ``log_kv``, which prints an event name and then
+its fields as a block of key/value lines. Keys are left-justified, so every
+value starts in the same column and a block is quick to scan.
+
+HTTP request lines from the provider HTTP clients (httpx and its httpx2 fork)
+and from the uvicorn access log are rewritten into the same block form, so a
+request shows its method, URL, and status in one aligned column.
 """
 
 import logging
+from collections.abc import Callable
+from typing import Any
 
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.markup import escape
 
 # Levels for app and third-party loggers. Pydantic AI delegates to provider
 # SDKs that log through different HTTP clients: groq uses httpx, while openai
 # (also used for ollama) and anthropic use the httpx2 fork. Both are kept at
-# INFO so every provider logs one "HTTP Request: POST ..." line per call;
-# Bedrock (botocore) gets the same line from a hook in aws.py.
+# INFO so every provider logs one HTTP request line per call; that line is
+# then rewritten as a key/value block by ``HttpRequestFilter``. Bedrock
+# (botocore) gets the same block from a hook in aws.py.
 LOGGER_LEVELS: dict[str, int] = {
     "__main__": logging.INFO,
     "boto3": logging.INFO,
@@ -32,6 +44,120 @@ LOGGER_LEVELS: dict[str, int] = {
     "uvicorn.access": logging.WARNING,
 }
 
+# Width of the key column in ``log_kv`` blocks: keys are left-justified to
+# this width, so every value starts in the same column.
+KEY_WIDTH = 10
+
+
+def _kv_line(key: str, value: Any) -> str:
+    """Return one ``key  value`` line, with the key in the key column."""
+    label = f"[cyan]{escape(key).ljust(KEY_WIDTH)}[/cyan]"
+    return f"{label}  {escape(str(value))}".rstrip()
+
+
+def format_kv(event: str, fields: dict[str, Any]) -> str:
+    """Return an event and its fields as a block of aligned key/value lines.
+
+    The event name comes first. Each field then gets its own line, with the key
+    left-justified in a fixed column and the value after it. Example::
+
+        agent build
+          model     bedrock:qwen.qwen3-coder
+
+    :param event: Short event name, such as ``"model switch"``.
+    :param fields: Fields, printed in the given order, one per line.
+    :return: Rich markup text for the log handler.
+    """
+    lines = [f"[bold]{escape(event)}[/bold]"]
+    lines += [_kv_line(key, value) for key, value in fields.items()]
+    return "\n".join(lines)
+
+
+def format_request(method: str, url: str, **fields: Any) -> str:
+    """Return an HTTP request as an aligned ``METHOD  URL`` line plus fields.
+
+    The method sits in the key column and the URL is its value, so the URL and
+    every field value start in the same column. Example::
+
+        POST      https://api.anthropic.com/v1/messages
+        status    HTTP/1.1 200 OK
+
+    :param method: HTTP method, such as ``"POST"``.
+    :param url: Request URL.
+    :param fields: Further values, printed in the given order, one per line.
+    :return: Rich markup text for the log handler.
+    """
+    rows = {method: url, **fields}
+    return "\n".join(_kv_line(key, value) for key, value in rows.items())
+
+
+# Loggers whose INFO records describe one finished HTTP request.
+HTTP_LOGGERS = ("httpx", "httpx2", "uvicorn.access")
+
+# Message templates of the HTTP request lines, with their ``%`` arguments.
+HTTPX_REQUEST = 'HTTP Request: %s %s "%s %d %s"'
+UVICORN_ACCESS = '%s - "%s %s HTTP/%s" %d'
+
+
+class HttpRequestFilter(logging.Filter):
+    """Rewrite third-party HTTP request lines as aligned key/value blocks.
+
+    httpx, its httpx2 fork, and the uvicorn access log pass the request parts
+    as ``%`` arguments. This filter reads those arguments and replaces the
+    message, so a request shows as ``METHOD  URL`` with its fields aligned
+    below::
+
+        POST      https://api.anthropic.com/v1/messages
+        status    HTTP/1.1 200 OK
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if not isinstance(args, tuple) or len(args) != 5:
+            return True
+        if record.msg == HTTPX_REQUEST:
+            method, url, http_version, code, reason = args
+            fields = {"status": f"{http_version} {code} {reason}".strip()}
+        elif record.msg == UVICORN_ACCESS:
+            client, method, url, http_version, code = args
+            fields = {
+                "status": f"HTTP/{http_version} {code}",
+                "client": client,
+            }
+        else:
+            return True
+        record.msg = format_request(method, url, **fields)
+        record.args = ()
+        record.markup = True
+        return True
+
+
+def log_kv(emit: Callable[..., None], event: str, /, **fields: Any) -> None:
+    """Log one event, with each field on its own aligned key/value line.
+
+    Pass a bound logger method so the level comes from the caller::
+
+        log_kv(logger.info, "model switch", previous=previous, current=current)
+
+    :param emit: Bound logger method, such as ``logger.warning``.
+    :param event: Short event name.
+    :param fields: Field values, printed in the given order, one per line.
+    """
+    emit(format_kv(event, fields), extra={"markup": True})
+
+
+def log_request(
+    emit: Callable[..., None], method: str, url: str, /, **fields: Any
+) -> None:
+    """Log one HTTP request, with its status and other fields aligned below.
+
+    :param emit: Bound logger method, such as ``logger.info``.
+    :param method: HTTP method, such as ``"POST"``.
+    :param url: Request URL.
+    :param fields: Further values, printed in the given order, one per line.
+    """
+    emit(format_request(method, url, **fields), extra={"markup": True})
+
 
 def setup_logging(level: int | str = logging.INFO) -> None:
     """Install Rich logging on the root logger and set library levels.
@@ -46,6 +172,8 @@ def setup_logging(level: int | str = logging.INFO) -> None:
     rich_handler = RichHandler(
         console=Console(stderr=True),
         log_time_format="[%X]",
+        # Drop the path column so ``log_kv`` lines keep their alignment.
+        show_path=False,
     )
     rich_handler.setLevel(level)
 
@@ -64,3 +192,12 @@ def setup_logging(level: int | str = logging.INFO) -> None:
         # uvicorn sets propagate=False, which would black-hole its records once
         # the handlers above are removed.
         logger.propagate = True
+
+    # Rewrite HTTP request lines from the client libraries and the access log.
+    # A filter runs on the record before any handler sees it.
+    for name in HTTP_LOGGERS:
+        logger = logging.getLogger(name)
+        logger.filters = [
+            item for item in logger.filters if not isinstance(item, HttpRequestFilter)
+        ]
+        logger.addFilter(HttpRequestFilter())

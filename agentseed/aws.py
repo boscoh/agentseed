@@ -18,21 +18,29 @@ from typing import Any
 import boto3
 from botocore.exceptions import TokenRetrievalError
 
+from agentseed.logger import log_kv, log_request
+
 logger = logging.getLogger(__name__)
 
 
 def _log_bedrock_request(http_response, **_: Any) -> None:
-    """Log a Bedrock call like httpx does for the HTTP-based providers.
+    """Log a Bedrock call in the same block form as the httpx lines.
 
-    botocore has no equivalent of httpx's ``HTTP Request: POST ...`` INFO line,
-    so this is hooked onto the client's ``after-call`` event.
+    botocore has no equivalent of httpx's HTTP request INFO line, so this is
+    hooked onto the client's ``after-call`` event. ``HttpRequestFilter`` in
+    logger.py rewrites the httpx lines; this hook calls ``log_request`` directly.
     """
     status = http_response.status_code
     try:
         reason = HTTPStatus(status).phrase
     except ValueError:
         reason = ""
-    logger.info(f'HTTP Request: POST {http_response.url} "HTTP/1.1 {status} {reason}"')
+    log_request(
+        logger.info,
+        "POST",
+        http_response.url,
+        status=f"HTTP/1.1 {status} {reason}".strip(),
+    )
 
 
 def _sso_cache_key_for_profile(home: Path, profile_name: str) -> str | None:
@@ -141,8 +149,11 @@ def get_aws_config() -> dict[str, Any]:
         if profile_name in available_profiles:
             aws_config["profile_name"] = profile_name
         else:
-            logger.info(
-                f"AWS profile '{profile_name}' not found, using default credential chain"
+            log_kv(
+                logger.info,
+                "aws profile missing",
+                profile=profile_name,
+                fallback="default credential chain",
             )
             os.environ.pop("AWS_PROFILE", None)
             profile_name = None

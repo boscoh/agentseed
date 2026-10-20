@@ -16,6 +16,8 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import infer_model
 from pydantic_ai.providers import infer_provider
 
+from agentseed.logger import log_kv
+
 logger = logging.getLogger(__name__)
 
 
@@ -106,7 +108,7 @@ def providers() -> dict[str, ProviderSpec]:
     empty = [name for name, spec in specs.items() if not spec.models]
     if empty:
         raise ValueError(f"Providers with no chat models in '{config_path}': {empty}")
-    logger.info(f"Loaded {len(specs)} providers from '{config_path}'")
+    log_kv(logger.info, "providers loaded", count=len(specs), source=config_path)
     return specs
 
 

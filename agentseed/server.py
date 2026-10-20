@@ -30,7 +30,7 @@ from pydantic_ai.messages import (
     sanitize_messages,
 )
 
-from agentseed.logger import setup_logging
+from agentseed.logger import log_kv, setup_logging
 from agentseed.providers import (
     ModelStatus,
     ModelRef,
@@ -86,7 +86,9 @@ def env_number(name: str, default: float, cast: type = float) -> Any:
     try:
         return cast(float(raw))
     except (ValueError, OverflowError):
-        logger.warning(f"Ignoring {name}={raw!r}: not a number, using {default:g}")
+        log_kv(
+            logger.warning, "env ignored", name=name, raw=raw, fallback=f"{default:g}"
+        )
         return cast(default)
 
 
@@ -103,7 +105,7 @@ def build_agent(chat_model: ModelRef) -> Agent:
     :param chat_model: Chat model, already resolved by ``resolve_chat_model``.
     :return: Configured ``Agent``.
     """
-    logger.info(f"Initializing agent on '{chat_model}'")
+    log_kv(logger.info, "agent build", model=chat_model)
     return Agent(build_model(*chat_model), instructions=INSTRUCTIONS)
 
 
@@ -237,10 +239,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     chat_model = app.state.default_chat_model
     try:
         app.state.agents[chat_model] = await asyncio.to_thread(build_agent, chat_model)
-        logger.info(f"Agent initialised on '{chat_model}'")
+        log_kv(logger.info, "agent ready", model=chat_model)
     except Exception as e:
         record_failure(app.state, chat_model, e)
-        logger.warning(f"Agent unavailable: {e}")
+        log_kv(logger.warning, "agent unavailable", model=chat_model, error=e)
     # Probe providers in the background so a slow or dead provider never
     # delays startup; /config reports live=null for each until this finishes.
     probe = asyncio.create_task(probe_providers(app))
@@ -258,12 +260,12 @@ async def probe_providers(app: FastAPI) -> None:
     try:
         results = await check_models()
     except Exception as e:
-        logger.warning(f"Provider probe failed: {e}")
+        log_kv(logger.warning, "probe failed", error=e)
         return
     for status in results:
         record_status(app.state, status)
     live = [status.service for status in results if status.live]
-    logger.info(f"Live providers: {', '.join(live) or 'none'}")
+    log_kv(logger.info, "providers live", services=", ".join(live) or "none")
 
 
 async def ensure_agent(state: Any, chat_model: ModelRef) -> Agent:
@@ -284,7 +286,7 @@ async def ensure_agent(state: Any, chat_model: ModelRef) -> Agent:
     others = [k for k in state.agents if k != state.default_chat_model]
     for evicted in others[: max(0, len(others) - max(1, AGENT_CACHE_SIZE))]:
         del state.agents[evicted]
-        logger.info(f"Evicted agent '{evicted}'")
+        log_kv(logger.info, "agent evicted", model=evicted)
     return agent
 
 
@@ -297,7 +299,7 @@ async def activate_model(state: Any, chat_model: ModelRef) -> ModelStatus:
         await ensure_agent(state, chat_model)
     except Exception as e:
         state.agents.pop(chat_model, None)
-        logger.warning(f"Agent '{chat_model}' unavailable: {e}")
+        log_kv(logger.warning, "agent unavailable", model=chat_model, error=e)
         return record_failure(state, chat_model, e)
     status = await check_model(chat_model)
     if not status.live and chat_model != state.default_chat_model:
@@ -326,7 +328,7 @@ async def resolve_agent(
     try:
         agent = await ensure_agent(request.app.state, chat_model)
     except Exception as e:
-        logger.warning(f"Agent '{chat_model}' unavailable: {e}")
+        log_kv(logger.warning, "agent unavailable", model=chat_model, error=e)
         raise HTTPException(status_code=503, detail=str(e)) from e
     return ResolvedAgent(agent, chat_model)
 
@@ -430,14 +432,14 @@ def create_app() -> FastAPI:
             else None
         )
         if instructions:
-            logger.info(f"Model switched from '{previous}' to '{current}'")
+            log_kv(logger.info, "model switch", previous=previous, current=current)
         started = time.perf_counter()
         try:
             result = await resolved.agent.run(
                 message_history=history, instructions=instructions
             )
         except Exception as e:
-            logger.error(f"Agent error: {e}")
+            log_kv(logger.error, "agent error", model=chat_model, error=e)
             record_failure(state, chat_model, e)
             raise HTTPException(status_code=500, detail=str(e)) from e
         elapsed_s = time.perf_counter() - started
