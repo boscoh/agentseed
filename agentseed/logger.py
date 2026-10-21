@@ -9,8 +9,12 @@ its fields as a block of key/value lines. Keys are left-justified, so every
 value starts in the same column and a block is quick to scan.
 
 HTTP request lines from the provider HTTP clients (httpx and its httpx2 fork)
-and from the uvicorn access log are rewritten into the same block form, so a
-request shows its method, URL, and status in one aligned column.
+and from the uvicorn access log are rewritten into the same block form, with
+the event name ``http request`` and the fields method, url, and status.
+
+Colors are the same for every block: the event name is plain, keys are cyan,
+and values have no color, except the HTTP method, which is bold. The Rich handler
+does not highlight numbers, URLs, or strings on its own.
 """
 
 import logging
@@ -18,6 +22,7 @@ from collections.abc import Callable
 from typing import Any
 
 from rich.console import Console
+from rich.highlighter import NullHighlighter
 from rich.logging import RichHandler
 from rich.markup import escape
 
@@ -49,13 +54,21 @@ LOGGER_LEVELS: dict[str, int] = {
 KEY_WIDTH = 10
 
 
-def _kv_line(key: str, value: Any) -> str:
-    """Return one ``key  value`` line, with the key in the key column."""
+def _kv_line(key: str, value: Any, bold: bool = False) -> str:
+    """Return one ``key  value`` line, with the key in the key column.
+
+    :param bold: Print the value in bold.
+    """
     label = f"[cyan]{escape(key).ljust(KEY_WIDTH)}[/cyan]"
-    return f"{label}  {escape(str(value))}".rstrip()
+    text = escape(str(value))
+    if bold and text:
+        text = f"[bold]{text}[/bold]"
+    return f"{label}  {text}".rstrip()
 
 
-def format_kv(event: str, fields: dict[str, Any]) -> str:
+def format_kv(
+    event: str, fields: dict[str, Any], bold_keys: tuple[str, ...] = ()
+) -> str:
     """Return an event and its fields as a block of aligned key/value lines.
 
     The event name comes first. Each field then gets its own line, with the key
@@ -66,29 +79,37 @@ def format_kv(event: str, fields: dict[str, Any]) -> str:
 
     :param event: Short event name, such as ``"model switch"``.
     :param fields: Fields, printed in the given order, one per line.
+    :param bold_keys: Keys whose values are printed in bold, such as ``method``.
     :return: Rich markup text for the log handler.
     """
-    lines = [f"[bold]{escape(event)}[/bold]"]
-    lines += [_kv_line(key, value) for key, value in fields.items()]
+    lines = [escape(event)]
+    lines += [
+        _kv_line(key, value, bold=key in bold_keys) for key, value in fields.items()
+    ]
     return "\n".join(lines)
 
 
 def format_request(method: str, url: str, **fields: Any) -> str:
-    """Return an HTTP request as an aligned ``METHOD  URL`` line plus fields.
+    """Return an HTTP request as an ``http request`` event with its fields.
 
-    The method sits in the key column and the URL is its value, so the URL and
-    every field value start in the same column. Example::
+    The method, URL, and any other fields are key/value lines, in the same
+    form as every other log block. Example::
 
-        POST      https://api.anthropic.com/v1/messages
-        status    HTTP/1.1 200 OK
+        http request
+          method    POST
+          url       https://api.anthropic.com/v1/messages
+          status    HTTP/1.1 200 OK
 
     :param method: HTTP method, such as ``"POST"``.
     :param url: Request URL.
     :param fields: Further values, printed in the given order, one per line.
     :return: Rich markup text for the log handler.
     """
-    rows = {method: url, **fields}
-    return "\n".join(_kv_line(key, value) for key, value in rows.items())
+    return format_kv(
+        "http request",
+        {"method": method, "url": url, **fields},
+        bold_keys=("method",),
+    )
 
 
 # Loggers whose INFO records describe one finished HTTP request.
@@ -104,11 +125,13 @@ class HttpRequestFilter(logging.Filter):
 
     httpx, its httpx2 fork, and the uvicorn access log pass the request parts
     as ``%`` arguments. This filter reads those arguments and replaces the
-    message, so a request shows as ``METHOD  URL`` with its fields aligned
-    below::
+    message, so a request shows as an ``http request`` event with its fields
+    aligned below::
 
-        POST      https://api.anthropic.com/v1/messages
-        status    HTTP/1.1 200 OK
+        http request
+          method    POST
+          url       https://api.anthropic.com/v1/messages
+          status    HTTP/1.1 200 OK
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -174,6 +197,9 @@ def setup_logging(level: int | str = logging.INFO) -> None:
         log_time_format="[%X]",
         # Drop the path column so ``log_kv`` lines keep their alignment.
         show_path=False,
+        # No automatic highlighting: it colors numbers, URLs, and strings by
+        # their shape. Only the markup from ``format_kv`` sets colors.
+        highlighter=NullHighlighter(),
     )
     rich_handler.setLevel(level)
 
