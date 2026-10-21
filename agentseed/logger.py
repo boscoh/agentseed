@@ -185,6 +185,9 @@ def setup_logging(level: int | str = logging.INFO) -> None:
         # No automatic highlighting: it colors numbers, URLs, and strings by
         # their shape. Only the markup from ``format_kv`` sets colors.
         highlighter=NullHighlighter(),
+        # An empty list turns off the default keyword highlight, which would
+        # print GET, POST, and the other HTTP methods in bold yellow.
+        keywords=[],
     )
     rich_handler.setLevel(level)
 
