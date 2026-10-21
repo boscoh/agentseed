@@ -13,8 +13,8 @@ and from the uvicorn access log are rewritten into the same block form, with
 the event name ``http request`` and the fields method, url, and status.
 
 Colors are the same for every block: the event name is plain, keys are cyan,
-and values have no color, except the HTTP method, which is bold. The Rich handler
-does not highlight numbers, URLs, or strings on its own.
+and values have no color. The Rich handler does not highlight numbers, URLs,
+or strings on its own.
 """
 
 import logging
@@ -54,21 +54,13 @@ LOGGER_LEVELS: dict[str, int] = {
 KEY_WIDTH = 10
 
 
-def _kv_line(key: str, value: Any, bold: bool = False) -> str:
-    """Return one ``key  value`` line, with the key in the key column.
-
-    :param bold: Print the value in bold.
-    """
+def _kv_line(key: str, value: Any) -> str:
+    """Return one ``key  value`` line, with the key in the key column."""
     label = f"[cyan]{escape(key).ljust(KEY_WIDTH)}[/cyan]"
-    text = escape(str(value))
-    if bold and text:
-        text = f"[bold]{text}[/bold]"
-    return f"{label}  {text}".rstrip()
+    return f"{label}  {escape(str(value))}".rstrip()
 
 
-def format_kv(
-    event: str, fields: dict[str, Any], bold_keys: tuple[str, ...] = ()
-) -> str:
+def format_kv(event: str, fields: dict[str, Any]) -> str:
     """Return an event and its fields as a block of aligned key/value lines.
 
     The event name comes first. Each field then gets its own line, with the key
@@ -79,13 +71,10 @@ def format_kv(
 
     :param event: Short event name, such as ``"model switch"``.
     :param fields: Fields, printed in the given order, one per line.
-    :param bold_keys: Keys whose values are printed in bold, such as ``method``.
     :return: Rich markup text for the log handler.
     """
     lines = [escape(event)]
-    lines += [
-        _kv_line(key, value, bold=key in bold_keys) for key, value in fields.items()
-    ]
+    lines += [_kv_line(key, value) for key, value in fields.items()]
     return "\n".join(lines)
 
 
@@ -105,11 +94,7 @@ def format_request(method: str, url: str, **fields: Any) -> str:
     :param fields: Further values, printed in the given order, one per line.
     :return: Rich markup text for the log handler.
     """
-    return format_kv(
-        "http request",
-        {"method": method, "url": url, **fields},
-        bold_keys=("method",),
-    )
+    return format_kv("http request", {"method": method, "url": url, **fields})
 
 
 # Loggers whose INFO records describe one finished HTTP request.
