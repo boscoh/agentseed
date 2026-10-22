@@ -12,7 +12,7 @@ HTTP request lines from the provider HTTP clients (httpx and its httpx2 fork)
 and from the uvicorn access log are rewritten into the same block form, with
 the event name ``http request`` and the fields method, url, and status.
 
-Colors are the same for every block: the event name is plain, keys are cyan,
+Colors are the same for every block: the event name is plain, keys are muted grey,
 and values have no color. The Rich handler does not highlight numbers, URLs,
 or strings on its own.
 """
@@ -53,10 +53,14 @@ LOGGER_LEVELS: dict[str, int] = {
 # this width, so every value starts in the same column.
 KEY_WIDTH = 10
 
+# Rich style of the keys in ``log_kv`` blocks: a fixed muted grey, so it looks
+# the same in every terminal theme.
+KEY_STYLE = "grey62"
+
 
 def _kv_line(key: str, value: Any) -> str:
     """Return one ``key  value`` line, with the key in the key column."""
-    label = f"[cyan]{escape(key).ljust(KEY_WIDTH)}[/cyan]"
+    label = f"[{KEY_STYLE}]{escape(key).ljust(KEY_WIDTH)}[/{KEY_STYLE}]"
     return f"{label}  {escape(str(value))}".rstrip()
 
 
